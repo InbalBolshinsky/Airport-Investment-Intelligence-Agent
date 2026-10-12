@@ -13,12 +13,23 @@ from airport_agent.config import ConfigError
 
 
 def format_reply(reply: AgentReply) -> str:
-    """Answer text followed by the tools called to produce it."""
+    """Answer text followed by the model that wrote it and the tools it called."""
     calls = ", ".join(
         f"{c['name']}({', '.join(f'{k}={v!r}' for k, v in c['args'].items())})"
         for c in reply.tool_calls
     )
-    return f"{reply.text}\n  [tools: {calls or 'none'}]"
+    return f"{reply.text}\n  [model: {reply.model or 'unknown'} | tools: {calls or 'none'}]"
+
+
+def answer(agent, question: str, thread_id: str) -> str:
+    """Ask the agent; turn an AI-service failure into a readable message instead of a traceback."""
+    try:
+        return format_reply(ask(agent, question, thread_id))
+    except Exception as error:  # provider errors vary by SDK (503 overload, 429 quota, timeouts)
+        return (
+            f"The AI service failed: {type(error).__name__}: {str(error)[:200]}\n"
+            "Try again in a minute, or change GEMINI_MODEL / LLM_PROVIDER in .env."
+        )
 
 
 def main() -> int:
@@ -32,12 +43,12 @@ def main() -> int:
     thread_id = str(uuid.uuid4())  # one conversation per run
 
     if len(sys.argv) > 1:
-        print(format_reply(ask(agent, " ".join(sys.argv[1:]), thread_id)))
+        print(answer(agent, " ".join(sys.argv[1:]), thread_id))
         return 0
 
     print("Airport investment agent — ask a question (empty line to quit).")
     while question := input("\nyou> ").strip():
-        print(f"\nagent> {format_reply(ask(agent, question, thread_id))}")
+        print(f"\nagent> {answer(agent, question, thread_id)}")
     return 0
 
 
