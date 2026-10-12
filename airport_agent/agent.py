@@ -49,7 +49,8 @@ Answers:
 - End with "Sources & limits": source, data year and the 2-3 most relevant tool caveats. Never add \
 caveats of your own.
 - Follow-ups: resolve "it"/"those" from the conversation; call tools again for new numbers, or \
-when an earlier tool result shows [cleared].
+when an earlier tool result shows [cleared]. If the analyst changed the weights, pass the same \
+weights to compare_airports.
 - If no tool covers the question (e.g. finances, non-US airports), say so."""
 
 # Fail fast instead of appearing frozen: the provider SDKs otherwise retry

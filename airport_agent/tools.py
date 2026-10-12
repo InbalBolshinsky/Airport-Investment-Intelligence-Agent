@@ -27,7 +27,9 @@ BUSY_CAVEAT = (
     "'Airport-constrained' = full planes at one of the US airports with the most flights per long runway "
     "(inferred), not measured capacity. Delays don't count toward it: one month of them is noisy and includes weather."
 )
-
+DEFAULT_WEIGHTS_CAVEAT = (
+    f"Total score, national rank and strong-candidate flag use the default weights {scoring.DEFAULT_WEIGHTS}."
+)
 
 # --- formatting helpers ---------------------------------------------------------
 
@@ -160,22 +162,35 @@ def rank_airports(
 
 
 @tool(parse_docstring=True)
-def compare_airports(airports: list[str]) -> ToolResult:
+def compare_airports(
+    airports: list[str],
+    runway_weight: float = scoring.DEFAULT_WEIGHTS["runway_pressure"],
+    terminal_weight: float = scoring.DEFAULT_WEIGHTS["terminal_pressure"],
+    unmet_demand_weight: float = scoring.DEFAULT_WEIGHTS["unmet_demand"],
+    congestion_weight: float = scoring.DEFAULT_WEIGHTS["congestion"],
+) -> ToolResult:
     """Compare two or more airports' renovation scores side by side.
 
     Use for follow-ups like "why is BOS above BDL?". Returns each airport's
     total, group scores and metric percentiles, the differences relative to the
     first airport (computed in code — explain the ranking from these, never
-    compute your own), and the measured values behind them.
+    compute your own), and the measured values behind them. If the analyst set
+    custom weights earlier, pass the same weights so the comparison matches.
 
     Args:
         airports: Airport codes (IATA), e.g. ["BOS", "BDL"].
+        runway_weight: Weight of the runway-pressure group.
+        terminal_weight: Weight of the terminal-pressure group.
+        unmet_demand_weight: Weight of the unmet-demand group.
+        congestion_weight: Weight of the congestion group.
     """
+    weights = {"runway_pressure": runway_weight, "terminal_pressure": terminal_weight,
+               "unmet_demand": unmet_demand_weight, "congestion": congestion_weight}
     try:
         codes = [analysis.resolve_airport(a) for a in airports]
-    except UnknownAirportError as error:
+        scores = analysis.scores(None if weights == scoring.DEFAULT_WEIGHTS else weights)
+    except ValueError as error:  # unknown airport or invalid weights
         return _error(str(error))
-    scores = analysis.scores()
     table = scoring.compare_airports(scores, codes).rename(index=lambda r: r.replace("_pct", "_percentile"))
     first = codes[0]
     data = {
@@ -188,6 +203,7 @@ def compare_airports(airports: list[str]) -> ToolResult:
         "bottleneck": {c: scores.loc[c, "bottleneck"] for c in codes},
         "strong_candidate": {c: bool(scores.loc[c, "strong_candidate"]) for c in codes},
         "first_airport": first,
+        "weights": weights,
     }
     caveats = [_score_caveat()] + [f"{c}: {note}" for c in codes for note in scores.loc[c, "caveats"]]
     return _scored_result(data, caveats)
@@ -251,12 +267,14 @@ def get_flight_distance_mix(
     short_max_miles: int = metrics.SHORT_HAUL_MAX_MILES,
     long_min_miles: int = metrics.LONG_HAUL_MIN_MILES,
 ) -> ToolResult:
-    """Share of an airport's passenger departures that are short, medium and long-haul.
+    """Share of an airport's departures that are short, medium and long-haul.
 
     Use for questions like "what % of flights out of Anchorage are long-haul?".
-    Returns the percentage of 2025 passenger-aircraft departures in each distance
-    band, the band limits used, and total departures including non-passenger flights.
-    State the band limits in the answer — there is no official definition.
+    Returns the percentage of 2025 departures in each distance band, two ways:
+    passenger_flights (passenger aircraft only — what matters for terminals) and
+    all_flights (cargo included). "Flights" is ambiguous, so report both and say
+    which is which; they can differ a lot at cargo hubs. State the band limits
+    in the answer — there is no official definition.
 
     Args:
         airport: Airport code (IATA), e.g. "ANC".
@@ -265,29 +283,33 @@ def get_flight_distance_mix(
     """
     try:
         code = analysis.resolve_airport(airport)
-    except UnknownAirportError as error:
+        with connect() as conn:
+            mixes = {
+                view: metrics.distance_mix(conn, code, short_max_miles, long_min_miles, passenger_only=passenger_only)
+                for view, passenger_only in (("passenger_flights", True), ("all_flights", False))
+            }
+    except ValueError as error:  # unknown airport or overlapping bands
         return _error(str(error))
-    with connect() as conn:
-        mix = metrics.distance_mix(conn, code, short_max_miles, long_min_miles)
-        all_departures = conn.execute(
-            "SELECT SUM(departures) FROM routes WHERE origin = ? AND year = ?", (code, metrics.END_YEAR)
-        ).fetchone()[0]
-    if mix is None:
-        return _error(f"No passenger departures recorded for {code} in {metrics.END_YEAR}.")
+    if mixes["all_flights"] is None:
+        return _error(f"No departures recorded for {code} in {metrics.END_YEAR}.")
 
     data = {
         "airport": code,
         "year": metrics.END_YEAR,
-        "short_haul_pct": _num(mix["short_pct"]),
-        "medium_haul_pct": _num(mix["medium_pct"]),
-        "long_haul_pct": _num(mix["long_pct"]),
         "bands_miles": {"short_below": short_max_miles, "long_above": long_min_miles},
-        "passenger_departures": _num(mix["passenger_departures"], 0),
-        "all_departures_including_cargo": _num(all_departures, 0),
+        **{
+            view: None if mix is None else {
+                "short_haul_pct": _num(mix["short_pct"]),
+                "medium_haul_pct": _num(mix["medium_pct"]),
+                "long_haul_pct": _num(mix["long_pct"]),
+                "departures": _num(mix["departures"], 0),
+            }
+            for view, mix in mixes.items()
+        },
     }
     caveats = [
-        "Passenger aircraft only; cargo, combined passenger/cargo and seaplane flights are excluded "
-        "(see all_departures_including_cargo).",
+        "Two views: passenger_flights counts passenger aircraft only; all_flights adds cargo, combined "
+        "passenger/cargo and seaplane flights.",
         "Distance bands are a convention, not an official definition; distances are great-circle miles.",
     ]
     source, period = analysis.provenance("routes")
@@ -343,6 +365,7 @@ def get_unmet_demand(airport: str) -> ToolResult:
         f"Fare premium compares fares with the national typical fare for the same trip distance "
         f"({metrics.END_YEAR}).",
         analysis.CONSTRAINTS_COVERAGE_CAVEAT,
+        DEFAULT_WEIGHTS_CAVEAT,
         *row["caveats"],
     ]
     return _scored_result(data, caveats, is_estimate=True)
@@ -390,6 +413,7 @@ def get_airport_profile(airport: str) -> ToolResult:
     caveats = [
         DEPARTING_CAVEAT,
         f"Growth rates compare {metrics.START_YEAR} with {metrics.END_YEAR} (COVID years skipped).",
+        DEFAULT_WEIGHTS_CAVEAT,
         *row["caveats"],
     ]
     return _scored_result(data, caveats)

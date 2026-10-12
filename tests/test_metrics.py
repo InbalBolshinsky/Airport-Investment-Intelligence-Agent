@@ -45,6 +45,7 @@ def conn() -> sqlite3.Connection:
             (2019, "AAA", "ZZZ", 1, 500, 1_000, 110_000, 90_000),
             (2019, "AAA", "ZZZ", 2, 500, 100, 0, 0),  # cargo: must not count
             (2025, "AAA", "ZZZ", 1, 500, 1_800, 400_000, 360_000),
+            (2025, "AAA", "YYY", 2, 4_000, 200, 0, 0),  # long-haul cargo: only in the all-flights view
         ],
         columns=["year", "origin", "dest", "aircraft_config", "distance_mi", "departures", "seats", "passengers"],
     ).to_sql("routes", c, index=False)
@@ -101,6 +102,22 @@ def test_small_base(conn):
     small = metrics.small_base(conn)
     assert bool(small["BBB"]) is True    # no 2019 traffic at all
     assert bool(small["AAA"]) is False   # exactly 100,000 is not below the threshold
+
+
+def test_distance_mix_passenger_only_and_all_flights(conn):
+    passenger = metrics.distance_mix(conn, "AAA")
+    assert passenger["short_pct"] == pytest.approx(100)  # 1,800 passenger flights, all 500 mi
+    assert passenger["long_pct"] == pytest.approx(0)
+    every = metrics.distance_mix(conn, "AAA", passenger_only=False)
+    assert every["departures"] == 2_000                  # + 200 cargo flights at 4,000 mi
+    assert every["short_pct"] == pytest.approx(90)       # 1,800 / 2,000
+    assert every["long_pct"] == pytest.approx(10)        # 200 / 2,000
+    assert every["medium_pct"] == pytest.approx(0)
+
+
+def test_distance_mix_rejects_overlapping_bands(conn):
+    with pytest.raises(ValueError):
+        metrics.distance_mix(conn, "AAA", short_max_miles=3_000, long_min_miles=800)
 
 
 def test_fare_curve_recovers_a_known_curve():

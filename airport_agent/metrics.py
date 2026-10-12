@@ -221,20 +221,31 @@ def distance_mix(
     airport: str,
     short_max_miles: float = SHORT_HAUL_MAX_MILES,
     long_min_miles: float = LONG_HAUL_MIN_MILES,
+    passenger_only: bool = True,
 ) -> dict[str, float] | None:
-    """Share of an airport's END_YEAR passenger departures in each distance band.
+    """Share of an airport's END_YEAR departures in each distance band.
 
     Bands: short < short_max_miles; long > long_min_miles; medium in between.
-    Passenger aircraft only — cargo excluded.
+    passenger_only=True counts passenger aircraft only; False counts every
+    aircraft type (passenger, cargo, combined passenger/cargo, seaplane).
 
     Returns:
-        short_pct, medium_pct, long_pct (0-100) and passenger_departures,
-        or None if the airport has no passenger departures.
+        short_pct, medium_pct, long_pct (0-100) and departures,
+        or None if the airport has no such departures.
+
+    Raises:
+        ValueError: if short_max_miles is above long_min_miles (the bands would overlap).
     """
-    df = pd.read_sql(
-        "SELECT distance_mi, departures FROM routes WHERE origin = ? AND year = ? AND aircraft_config = ?",
-        conn, params=(airport, END_YEAR, PASSENGER_AIRCRAFT_CONFIG),
-    )
+    if short_max_miles > long_min_miles:
+        raise ValueError(
+            f"Short-haul limit ({short_max_miles:,} mi) must not be above the long-haul limit ({long_min_miles:,} mi)."
+        )
+    query = "SELECT distance_mi, departures FROM routes WHERE origin = ? AND year = ?"
+    params: tuple = (airport, END_YEAR)
+    if passenger_only:
+        query += " AND aircraft_config = ?"
+        params += (PASSENGER_AIRCRAFT_CONFIG,)
+    df = pd.read_sql(query, conn, params=params)
     total = df["departures"].sum()
     if not total:
         return None
@@ -244,7 +255,7 @@ def distance_mix(
         "short_pct": 100 * short / total,
         "medium_pct": 100 * (total - short - long) / total,
         "long_pct": 100 * long / total,
-        "passenger_departures": float(total),
+        "departures": float(total),
     }
 
 
