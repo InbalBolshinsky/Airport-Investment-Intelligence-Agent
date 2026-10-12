@@ -50,7 +50,9 @@ def build_model(provider: str, model_name: str, max_retries: int = MAX_RETRIES) 
     Gemini: temperature 1.0, as Google strongly recommends for Gemini 3 models
     (lower values can cause looping); set explicitly because the LangChain
     connector defaults to 0.7. Thinking level comes from GEMINI_THINKING_LEVEL.
-    Groq: temperature 0 for repeatable tool choices.
+    Groq: temperature 0 for repeatable tool choices; its private reasoning is
+    hidden so it doesn't enter the conversation history (Gemini can't replay it
+    when it takes over again, and it wastes free-tier tokens).
 
     Args:
         provider: "gemini" or "groq".
@@ -74,6 +76,7 @@ def build_model(provider: str, model_name: str, max_retries: int = MAX_RETRIES) 
         model=model_name,
         api_key=api_key,
         temperature=0,
+        reasoning_format="hidden",
         max_retries=max_retries,
         timeout=REQUEST_TIMEOUT_SECONDS,
     )

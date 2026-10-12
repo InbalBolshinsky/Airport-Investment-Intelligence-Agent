@@ -1,0 +1,6 @@
+bts_code,faa_code,note
+AZA,IWA,Phoenix-Mesa Gateway: BTS uses the IATA code; FAA identifier differs
+FCA,GPI,Glacier Park International (Kalispell): BTS uses the IATA code; FAA identifier differs
+USA,JQF,Concord-Padgett Regional: BTS uses the IATA code; FAA identifier differs
+SCE,UNV,State College Regional: BTS uses the IATA code; FAA identifier differs
+HHH,HXD,Hilton Head: BTS uses the IATA code; FAA identifier differs

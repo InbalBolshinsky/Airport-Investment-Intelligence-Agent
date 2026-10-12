@@ -16,6 +16,14 @@ Edit `.env` and add a free API key:
 - **Gemini** (default): get a key at https://aistudio.google.com and set `GOOGLE_API_KEY`.
 - **Groq** (alternative): get a key at https://console.groq.com, set `GROQ_API_KEY` and `LLM_PROVIDER=groq`.
 
+## Load the data
+
+Fetches public BTS, DOT and FAA data into `data/airports.db` (about 3 minutes; no API key needed):
+
+```bash
+python -m airport_agent.ingest
+```
+
 ## Run
 
 ```bash

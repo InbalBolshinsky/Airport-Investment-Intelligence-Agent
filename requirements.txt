@@ -8,3 +8,7 @@ langchain-groq==1.1.3
 
 # Reads settings from .env
 python-dotenv==1.2.4
+
+# Data ingestion: HTTP requests and table cleaning
+requests==2.34.2
+pandas==3.0.6
