@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SUPPORTED_PROVIDERS = ("gemini", "groq")
+GEMINI_THINKING_LEVELS = ("low", "medium", "high")
 
 # Load .env from the project folder, so commands work from any directory.
 load_dotenv(PROJECT_ROOT / ".env")
@@ -30,6 +31,7 @@ class Settings:
 
     llm_provider: str
     gemini_model: str
+    gemini_thinking_level: str
     groq_model: str
     db_path: Path
     google_api_key: str = field(repr=False)
@@ -63,12 +65,18 @@ def load_settings() -> Settings:
     """Build Settings from environment variables (already loaded from .env).
 
     Raises:
-        ConfigError: if LLM_PROVIDER is not one of SUPPORTED_PROVIDERS.
+        ConfigError: if LLM_PROVIDER or GEMINI_THINKING_LEVEL has an unsupported value.
     """
     provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
     if provider not in SUPPORTED_PROVIDERS:
         raise ConfigError(
             f"LLM_PROVIDER must be one of {SUPPORTED_PROVIDERS}, got '{provider}'."
+        )
+
+    thinking_level = os.getenv("GEMINI_THINKING_LEVEL", "low").strip().lower()
+    if thinking_level not in GEMINI_THINKING_LEVELS:
+        raise ConfigError(
+            f"GEMINI_THINKING_LEVEL must be one of {GEMINI_THINKING_LEVELS}, got '{thinking_level}'."
         )
 
     db_path = Path(os.getenv("DB_PATH", "data/airports.db"))
@@ -78,6 +86,7 @@ def load_settings() -> Settings:
     return Settings(
         llm_provider=provider,
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
+        gemini_thinking_level=thinking_level,
         groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip(),
         db_path=db_path,
         google_api_key=os.getenv("GOOGLE_API_KEY", "").strip(),
