@@ -1,79 +1,65 @@
 # Design — Airport Investment Intelligence Agent
 
-<!-- Working draft: finalize against what the code actually does before shipping. Open items are marked TODO in comments. -->
-
 ## Overview
 
-We rank US airports by how fast demand is outgrowing their runways and terminals, using a deterministic score built from public data, and an AI agent that explains the results — including what the data can't tell us.
+We rank US airports by how fast demand is outgrowing their capacity, using a deterministic score over public data, with an AI agent that explains the results and their limits.
 
 ```
-Public APIs + 2 BTS downloads ──► ingest scripts ──► SQLite
-                                                       │
-                     deterministic metric & scoring functions (Python)
-                                                       │
-                     6 tools (each result carries source, data year, caveats)
-                                                       │
-            LangChain agent (Gemini by default, Groq switchable) ◄──► Streamlit chat
+Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─► 6 tools ─► LLM agent ─► chat (text/voice)
 ```
-
-- **Rule:** the LLM never produces a number. Every metric, score, rank and difference comes from Python; the LLM chooses tools and explains their output.
 
 ## Scoring methodology
 
-- **What the score measures:** need for added flight and passenger capacity — not financial return. The brief frames profit "based on increased flight and passenger capacity"; capacity need is the measurable precondition.
-- **Score = weighted sum of four groups** (weights configurable by the analyst):
+- **What we measure:** need for more flight and passenger capacity, not financial return. The brief defines profit "based on increased flight and passenger capacity", and need is the part we can measure.
+- **Score (0–100):** a weighted average of four groups. The analyst can change the weights.
 
-  | Group             | Default weight | Metrics                                                                   |
-  | ----------------- | -------------- | ------------------------------------------------------------------------- |
-  | Runway pressure   | 30             | Flight growth; flights per runway                                         |
-  | Terminal pressure | 30             | Passenger growth; growth in passengers per flight                         |
-  | Unmet demand      | 30             | Load factor; average fare                                                 |
-  | Congestion        | 10             | Share of arriving flights delayed by the National Aviation System (capacity-related) |
-- **Why these weights:** pressure on the airport itself matters most — two of three core groups are pressure (60 of 90 core points); unmet demand keeps a real share because an investor needs both. Congestion is low-weight because most delays are caused by weather or airlines, not capacity.
-- **Metric definitions:**
+  | Group             | Weight | Metrics                                                             |
+  | ----------------- | ------ | ------------------------------------------------------------------- |
+  | Runway pressure   | 30     | Flights per long runway (counts 2×); flight growth                  |
+  | Terminal pressure | 30     | Passenger growth; growth in passengers per flight                   |
+  | Unmet demand      | 30     | Load factor; fare premium vs. similar-distance trips                |
+  | Congestion        | 10     | Share of arriving flights delayed by the aviation system (capacity) |
 
-  - Growth = annualized rate, 2019 → 2025 (skips COVID years 2020–22; full yearly series available to the analyst).
-  - Flights per runway counts all departures including cargo (cargo uses runways too), over runways long enough for airline use. 
-  - Passengers per flight counts passenger flights only. Rising passengers per flight = more people through the terminal per aircraft (bigger or fuller planes) — terminal pressure that runway metrics miss.
-  - Fare signal = how far the airport's fares sit above the national typical fare for trips of the same distance (passenger-weighted over its markets). Raw fare would favor long-haul airports and fare per mile short-haul ones.
-- **Normalization:** each metric → percentile rank (0–100) against all US airports; group score = mean of its metric percentiles, except that in runway pressure, flights per runway (how busy it is today) counts twice as much as flight growth. Raw values are always shown alongside.
-- **Peer group:** national, so an airport's score doesn't change with the question; regional rank is shown too ("#1 of 9 in New England, 85th percentile nationally").
-- **Size:** volume is not scored (we don't assume the investor prefers big or small airports). Passenger counts are departing passengers (BTS T-100), about half of the total an airport usually reports. Airports under 100k departing passengers/year are excluded (tiny bases produce meaningless growth rates); the analyst can filter by size in the chat.
-- **"Busy" is inferred, not measured:** no public dataset gives each airport's true capacity, so "airport-constrained" means among the busiest US airports on flights per long runway or capacity-caused delays — not proven to be at its physical limit.
-- **Strong candidate** = both signals an investor needs: a high score (≥ 70th national percentile — demand growing into capacity) AND "airport-constrained" (demand blocked by the airport today). Computed in code, not by the LLM.
-- **Unmet demand is an estimate, not a measurement:** reported as an index (strength of signal, not a passenger count) plus a "who's the bottleneck?" label — full planes only signal a renovation opportunity when the airport is also under pressure ("airport-constrained" vs. "airline-side").
-- **Other definitions:** long-haul = three distance bands (short < 800 mi, medium 800–3,000 mi, long > 3,000 mi; configurable), passenger flights only. Congestion is answered as a side-by-side profile (utilization, delays, delay causes, known constraints), not a single number.
-
-- **Missing data:** an airport is scored on the metrics it has — a group averages its available metrics, weights are rescaled over available groups — and the result lists what's missing. No values are filled in.
-- **Outliers:** percentile ranks cap any single extreme value. Growth from a small 2019 base (< 100k passengers) keeps its rank but carries a caveat that it is likely a one-time step (e.g. new airline service), not a trend.
+- **Why these weights:** pressure on the airport itself matters most, but an investor also needs signs of unmet demand. Congestion counts little because most delays come from weather and airlines. A runway that is busy today counts twice as much as growth: a full airport is a surer bet than one growing fast from a small base.
+- **Definitions:**
+  - Growth: yearly average, 2019 → 2025 (skips the COVID years).
+  - Flights per long runway: all 2025 departures, cargo included, per runway of 5,000 ft or more.
+  - Passengers per flight: passenger planes only. When it rises, more people pass through the terminal per flight.
+  - Fare premium: how far fares sit above the national typical fare for trips of the same distance.
+  - Long-haul: over 3,000 miles (short < 800, medium in between; adjustable), passenger flights only.
+- **Percentiles:** each metric becomes a percentile (0–100) against all 226 ranked US airports (100k+ departing passengers in 2025). They are computed nationally, so a score never changes with the question asked.
+- **Size isn't scored**, because we don't know whether the investor prefers big or small airports. Answers show each airport's size and the analyst can filter by it. Counts are departing passengers, about half of what airports usually report.
+- **Bottleneck label:** "airport-constrained" means planes are full *and* the airport is among the busiest today (both ≥ 70th percentile). Full planes at an airport with room are "airline-side": airlines could add flights themselves. "Busy" is relative to other airports; true capacity isn't public.
+- **Strong candidate:** high score (≥ 70th percentile) *and* airport-constrained. Computed in code.
+- **Unmet demand** is an estimate: an index of how strong the signals are, not a count of passengers.
+- **Missing data:** an airport is scored on what it has and the answer lists what's missing. Nothing is filled in.
+- **Outliers:** percentiles cap extreme values. Growth from a tiny 2019 base keeps its rank but carries a warning that it's likely a one-time jump (e.g. a new airline base).
 
 ## Key tradeoffs
 
-- **Capacity need, not ROI.** We dropped an airport-finance metric: construction costs aren't public, and the brief defines profit through capacity.
-- **Percentile rank over min–max scaling.** Robust to outlier airports and easy to explain, but near-ties can look far apart — mitigated by showing raw values.
-- **No terminal-size data exists publicly.** Terminal pressure measures *growth* of pressure, not how full the terminal is today.
-- **Full planes are a hint, not proof.** Airlines want full planes; the ranking still gives some credit for full planes at airports with spare room (the bottleneck label explains this; it doesn't fix it).
-- **Rankings lean toward smaller, fast-growing airports.** Large hubs are among the busiest airports but many are still below 2019 traffic, and terminal pressure can only be measured as growth. We chose not to reward size itself (the investor may prefer smaller airports); answers always show size, and the analyst can filter by it. Growth also partly penalizes constrained airports — growth at a busy airport is limited by its capacity — and our data can't separate that from post-COVID demand shifts; the "strong candidate" flag exists so constrained airports aren't judged on growth alone.
-- **Endpoint growth (2019 → 2025).** Simple and skips COVID, but an unusual year at one airport distorts its growth.
-- **APIs, with one stated exception.** Airport traffic, fares, runways and locations come from public APIs (BTS, DOT, FAA). Route-level traffic and delay causes are only published as BTS downloads, so we use those files.
-- **Data is a snapshot.** Data is fetched into SQLite by a script, with the data year shown on every answer. Known airport constraints (curfews, caps, slot rules) come from a small hand-curated, sourced and dated file covering a few airports — a missing entry doesn't mean no constraints.
-- **LangChain over a plain SDK.** Provider switching and a model fallback chain (free-tier rate limits), built-in conversation memory and a recorded tool-call trace, at the cost of a hidden agent loop and a fast-changing library.
-- **Conversations live in memory only.** A page refresh starts over; production would persist them for audit and resumption.
-- **Out of scope (stated, not modelled):** airport finances, catchment population/income growth, competition from nearby airports, physical/regulatory room to expand, dependence on one airline, peak-hour congestion; Alaska and Hawaii have no fare data; US territories excluded.
+- **Need, not ROI.** Construction costs aren't public, so we score capacity need only.
+- **Percentiles, not raw scaling.** One extreme airport can't distort everyone else, but near-ties can look far apart, so raw values are shown too.
+- **No terminal-size data exists publicly.** Terminal pressure measures how fast pressure grows, not how full a terminal is.
+- **Rankings lean toward small, fast-growing airports.** Big hubs are busy but many are still below 2019 traffic, partly because growth at a busy airport is limited by its capacity. We kept size unscored and added the strong-candidate flag, so busy hubs aren't judged on growth alone. In New England the strong candidates are Portland, Burlington and Boston.
+- **Full planes are a hint, not proof.** Airlines want full planes. The score still rewards them a little at airports with room; the bottleneck label points this out.
+- **Two-year growth (2019 vs 2025).** Simple, but one unusual year distorts it.
+- **APIs, with exceptions.** Traffic, fares, runways and locations come from BTS, DOT and FAA APIs. Routes and delay causes are only published as downloads. Delays cover the latest single month (a full year takes ~2 hours to download), so they're seasonal. The data is a snapshot; one command rebuilds it in ~3 minutes.
+- **Partial data.** Fares cover 143 of 226 airports and none in Alaska or Hawaii. Known constraints (caps, curfews, runway spacing) are hand-checked, sourced and dated for SNA, SFO and LAX only.
+- **LangChain, not a plain SDK.** It gives easy model switching, fallbacks and conversation memory, but hides the agent loop and changes often. Conversations are kept in memory only.
+- **Out of scope:** airport finances, population growth, competition between nearby airports, room to expand.
 
 ## Where and how AI is used
 
-### In the agent
+### Building it with Claude Code
 
-- **The LLM does:** interpret the question, choose a tool and its arguments, map names to airport codes ("Santa Ana" → SNA), resolve follow-ups from conversation history ("why is it above Hartford?"), and write the explanation from tool output — including the caveats the tool returns.
-- **The LLM does not:** produce any number, score, rank, difference or estimate; decide which airports are in a region; clean or join data.
-- **Voice input:** a recorded question is transcribed by Groq Whisper (Gemini as backup) and shown as "heard: …" before the agent answers, so a misheard airport name is visible.
-- **Guardrails:** tools validate airport codes and suggest alternatives on unknown ones; every tool result carries source, data year and caveats; estimates are labelled as estimates; the system prompt forbids inventing numbers.
-- **Model:** Gemini 3.6 Flash (free tier) by default, with an automatic fallback chain — Gemini 3.5 Flash-Lite (separate quota), then Groq (separate provider) — so a quota or overload error doesn't stop the demo. Every answer shows which model wrote it. All reached through LangChain's prebuilt agent (`create_agent`) with six purpose-built tools.
+I built this with Claude Code (Claude Opus 5.5) as a pair-programmer, working phase by phase from design to verification.
 
-### In building it
+- **Design:** for every decision, Claude laid out 2–3 options with pros, cons and time cost; I chose, and kept a private decision log. Several key choices came from questioning its suggestions — e.g. treating full planes as a hint rather than proof of unmet demand, separating airport from airline bottlenecks, and correcting "a full airport can't grow" to "growth is limited by capacity".
+- **Data:** Claude tested every candidate API live before we relied on it, which showed which sources have real APIs and which only offer downloads, and surfaced data issues we then handled (e.g. passenger counts are departing only; one airport missing from the FAA list).
+- **Code:** written in small increments, each explained before it was written and reviewed by me, with unit tests for the scoring.
+- **Checks:** Claude ran the example questions through the agent, sanity-checked rankings with me (which led to fixes such as SFO's bottleneck label), and verified a clean install from the README.
 
-- I built this with Claude Code (Anthropic's AI coding assistant, Claude Opus 5.5) as a pair-programmer.
-- **Design:** for each decision, Claude laid out 2–3 options with pros, cons and time cost; I made the call, and every decision and its reasoning is logged. Several key choices came from questioning its first suggestions — e.g., treating load factor as a hint rather than proof of unmet demand, and keeping the airport-vs-airline bottleneck distinction.
-- **Data:** Claude tested the candidate public APIs live before we committed to them, which is how we found which sources have real APIs and which only offer downloads.
-- **Code:** written in small increments, each explained before it was written and reviewed by me.
+### Inside the agent
+
+- **The LLM** understands the question, picks a tool and its inputs, handles follow-ups, and writes the answer from the tool's results and caveats. It never produces or calculates a number — every metric, score, rank and difference comes from Python, and a "How I got this" panel shows the tool calls and raw results behind each answer.
+- **Models:** Gemini 3.6 Flash (free tier), falling back to Gemini 3.5 Flash-Lite and then Groq if one is overloaded or out of quota. Spoken questions are transcribed by Groq Whisper (Gemini as backup).

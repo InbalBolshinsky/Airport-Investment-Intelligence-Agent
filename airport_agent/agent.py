@@ -39,6 +39,8 @@ a suggestion, use it or ask the analyst.
 
 Answers:
 - Rankings: lead with strong candidates (high score AND airport-constrained), show each airport's size.
+- If the question is about terminals or runways specifically, also show that group's score \
+(terminal_pressure / runway_pressure) and say the ranking is by overall score.
 - Congestion: describe the profile; don't reduce it to one number.
 - Unmet demand: call it an estimate; explain "why" from the signals and known constraints.
 - Be concise; use a small table for 3+ airports.
