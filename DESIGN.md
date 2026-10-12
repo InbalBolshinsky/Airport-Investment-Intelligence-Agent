@@ -1,20 +1,20 @@
-# Design — Airport Investment Intelligence Agent
+# Design - Airport Investment Intelligence Agent
 
 ## Overview
 
-We rank US airports by how fast demand is outgrowing their capacity, using a deterministic score over public data, with an AI agent that explains the results and their limits.
+Ranking US airports by how fast demand is outgrowing their capacity, using a deterministic score over public data, with an AI agent that explains the results and their limits.
 
 ```
 Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─► 6 tools ─► LLM agent ─► chat (text/voice)
 ```
 
-- **The LLM** understands the question, picks a tool and its inputs, handles follow-ups, and writes the answer from the tool's results and caveats. It never produces or calculates a number — every metric, score, rank and difference comes from Python, and a "How I got this" panel shows the tool calls and raw results behind each answer.
+- **The LLM** understands the question, picks a tool and its inputs, handles follow-ups, and writes the answer from the tool's results and caveats. It never produces or calculates a number: every metric, score, rank and comparison is calculated by deterministic Python code, and a "How I got this" panel shows the tool calls and raw results behind each answer.
 - **Models:** Gemini 3.6 Flash (free tier), falling back to Gemini 3.5 Flash-Lite and then Groq if one is overloaded or out of quota. Spoken questions are transcribed by Groq Whisper (Gemini as backup).
 
 ## Scoring methodology
 
-- **What we measure:** need for more flight and passenger capacity, not financial return. The brief defines profit "based on increased flight and passenger capacity", and need is the part we can measure.
-- **Score (0–100):** a weighted average of four groups. The analyst can change the weights.
+- **What we measure:** need for more flight and passenger capacity. We prefer not to measure financial return.
+- **Score (0–100):** a weighted average of four groups. The analyst can change the weights by asking in the chat (e.g. "rank again without congestion"); this applies to rankings and comparisons, while single-airport answers use the defaults and say so.
 
   | Group             | Weight | Metrics                                                                                                     |
   | ----------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
@@ -34,8 +34,8 @@ Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─�
 - **Size isn't scored**, because we don't know whether the investor prefers big or small airports. Answers show each airport's size and the analyst can filter by it. Counts are departing passengers, about half of what airports usually report.
 - **Bottleneck label:** "airport-constrained" means planes are full *and* the airport is among the busiest today by flights per long runway (both ≥ 70th percentile, i.e. top 30%: clearly above average, not rare). Full planes at an airport with room are "airline-side": airlines could add flights themselves. "Busy" is relative to other airports; true capacity isn't public. Delays are left out of the label: one month of them is noisy at small airports and includes weather (a foggy 135k-passenger airport ranked in the top 1% for delays).
 - **Strong candidate:** high score (≥ 70th percentile) *and* airport-constrained. Computed in code.
-- **Unmet demand** is an estimate: an index of how strong the signals are, not a count of passengers.
-- **Missing data:** an airport is scored on what it has and the answer lists what's missing. Nothing is filled in.
+- **Unmet demand** is an estimate of people who would fly from an airport but can't get a seat. It can't be counted, so we infer it from two signals, averaged as percentiles: full planes (high load factor: seats sell out) and high fares for the distance (scarce seats push prices up). The result is an index of how strong the signals are, not a count of passengers. Where fares are missing, it rests on load factor alone.
+- **Missing data:** an airport is scored on what it has and the answer lists what's missing. Nothing is filled in. If custom weights leave an airport with no data in any weighted group, it gets no score or rank, and the answer says why.
 - **Outliers:** percentiles cap extreme values. Growth from a tiny 2019 base keeps its rank but carries a warning that it's likely a one-time jump (e.g. a new airline base).
 
 ## Key tradeoffs
@@ -49,6 +49,7 @@ Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─�
 - **Growth from two endpoints (2019 vs 2025).** Simple, but one unusual year distorts it.
 - **APIs, with exceptions.** Traffic, fares, runways and locations come from BTS, DOT and FAA APIs. Routes and delay causes are only published as downloads. Delays cover the latest single month (a full year takes ~2 hours to download), so they're seasonal. The data is a snapshot; one command rebuilds it in ~3 minutes.
 - **Partial data.** Fares cover 143 of 226 airports and none in Alaska or Hawaii. Known constraints (caps, curfews, runway spacing) are hand-checked, sourced and dated for SNA, SFO and LAX only.
+- **Two data gaps the code doesn't guard against** (neither occurs in today's data). An airport with no runway of 5,000 ft or more in the FAA data would have its full planes labelled "airline-side" (room on the runways) when its runway use is actually unknown. And the delay download is assumed to hold one month; if BTS ever returned several, airports would be counted more than once.
 - **LangChain, not a plain SDK.** It gives easy model switching, fallbacks and conversation memory, but hides the agent loop and changes often. Conversations live in memory only: a refresh or restart starts a new one. Each turn resends the whole conversation, which suits short analyst sessions (from about turn 6, older tool results are trimmed to save quota); the Groq fallback's free-tier limit means it mainly helps early in a conversation.
 - **Out of scope:** airport finances, population growth, competition between nearby airports, room to expand.
 
@@ -56,7 +57,7 @@ Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─�
 
 I built this with Claude Code (Claude Opus 5.5) as a pair-programmer, working phase by phase from design to verification.
 
-- **Design:** for every decision, Claude laid out 2–3 options with pros, cons and time cost; I chose, and kept a private decision log. Several key choices came from questioning its suggestions — e.g. treating full planes as a hint rather than proof of unmet demand, separating airport from airline bottlenecks, and correcting "a full airport can't grow" to "growth is limited by capacity".
+- **Design:** for every decision, Claude laid out multiple options with pros, cons and time cost; I chose, and kept a private decision log. Several key choices came from questioning its suggestions - e.g. treating full planes as a hint rather than proof of unmet demand, separating airport from airline bottlenecks, and correcting "a full airport can't grow" to "growth is limited by capacity".
 - **Data:** Claude tested every candidate API live before we relied on it, which showed which sources have real APIs and which only offer downloads, and surfaced data issues we then handled (e.g. passenger counts are departing only; one airport missing from the FAA list).
 - **Code:** written in small increments, each explained before it was written and reviewed by me, with unit tests for the scoring.
 - **Checks:** Claude ran the example questions through the agent, sanity-checked rankings with me (which led to fixes such as SFO's bottleneck label), and verified a clean install from the README.
