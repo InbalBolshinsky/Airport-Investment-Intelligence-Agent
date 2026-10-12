@@ -45,7 +45,7 @@ def test_percentile_ranks_single_value_is_fifty():
     assert scoring.percentile_ranks(pd.Series([7.0, np.nan]))[0] == 50.0
 
 
-# --- missing data (D-48) ------------------------------------------------------
+# --- missing data -------------------------------------------------------------
 
 def test_missing_fare_scores_unmet_demand_on_load_factor_alone():
     scored = scoring.score(make_metrics(fare_premium=[np.nan, 1.0, 2.0, 3.0]))
@@ -61,7 +61,7 @@ def test_missing_group_rescales_weights():
     assert a["total_score"] == pytest.approx(expected)
 
 
-# --- outliers (D-6, D-46) -----------------------------------------------------
+# --- outliers -----------------------------------------------------------------
 
 def test_extreme_outlier_does_not_move_other_airports_percentiles():
     normal = scoring.score(make_metrics(passenger_growth=[0.01, 0.02, 0.03, 0.04]))
@@ -99,11 +99,11 @@ def test_runway_fullness_counts_twice_growth():
     assert scored.loc["A", "runway_pressure"] == pytest.approx(100 / 3)
 
 
-# --- bottleneck label (D-15, D-51) --------------------------------------------
+# --- bottleneck label ---------------------------------------------------------
 
 def test_bottleneck_labels():
     pct = pd.DataFrame(
-        {  # load factor, flights per runway, capacity delays (percentiles)
+        {  # load factor, flights per runway, aviation-system delays (percentiles)
             "load_factor_pct":        [90, 90, 90, 40, np.nan],
             "flights_per_runway_pct": [80, 20, 20, 90, 90],
             "nas_delay_rate_pct":     [10, 95, 20, 90, 90],
@@ -113,7 +113,7 @@ def test_bottleneck_labels():
     labels = scoring.bottleneck_label(pct)
     assert labels.to_dict() == {
         "full_runways": "airport-constrained",
-        "full_by_delays": "airport-constrained",
+        "full_by_delays": "airline-side",  # delays alone don't make an airport constrained
         "room": "airline-side",
         "planes_not_full": "no unmet-demand signal",
         "no_data": "unknown",
@@ -125,13 +125,13 @@ def test_strong_candidate_needs_high_score_and_airport_constraint():
     scored = scoring.score(make_metrics(n=6))
     assert bool(scored.loc["F", "strong_candidate"]) is True     # top score, airport-constrained
     assert bool(scored.loc["A", "strong_candidate"]) is False    # lowest score, planes not full
-    # high score but the airport has room (nothing "busy now") -> not a strong candidate
+    # high score but the airport has room (few flights per runway) -> not a strong candidate
     roomy = scoring.score(make_metrics(n=6, flights_per_runway=[6.0, 5, 4, 3, 2, 1], nas_delay_rate=[6.0, 5, 4, 3, 2, 1]))
     assert roomy.loc["F", "bottleneck"] == "airline-side"
     assert bool(roomy.loc["F", "strong_candidate"]) is False
 
 
-# --- ranking and filtering (D-7) ----------------------------------------------
+# --- ranking and filtering ----------------------------------------------------
 
 def test_region_filter_does_not_change_scores():
     scored = scoring.score(make_metrics())

@@ -5,8 +5,8 @@ table only as a download form (no API), so we submit the form from code: load
 the form page, copy its hidden ASP.NET fields, tick the columns we need, and
 post it back; the response is a zip with one CSV.
 
-Years: START_YEAR and END_YEAR, the endpoints of the growth window (D-20).
-END_YEAR gives the long-haul share; both give passengers per passenger flight (D-18).
+Years: START_YEAR and END_YEAR, the endpoints of the growth window.
+END_YEAR gives the long-haul share; both give passengers per passenger flight.
 
 Cleaning:
 - Summed over carriers and months to one row per year, origin, destination

@@ -23,7 +23,10 @@ from airport_agent.results import ToolResult, make_result
 
 SCORE_TABLES = ("airport_monthly", "routes", "fares", "delays", "runways", "airports", "regions")
 DEPARTING_CAVEAT = "Passengers = departing passengers only (~half of the total airports usually report)."
-BUSY_CAVEAT = "'Airport-constrained' = among the busiest US airports (inferred), not measured capacity."
+BUSY_CAVEAT = (
+    "'Airport-constrained' = full planes at one of the US airports with the most flights per long runway "
+    "(inferred), not measured capacity. Delays don't count toward it: one month of them is noisy and includes weather."
+)
 
 
 # --- formatting helpers ---------------------------------------------------------
@@ -68,7 +71,7 @@ def _raw_metrics(row: pd.Series) -> dict[str, float | None]:
         "passengers_per_flight_growth_pct_per_year": _pct(row["passengers_per_flight_growth"]),
         "load_factor_pct": _pct(row["load_factor"]),
         "fare_premium_pct": _pct(row["fare_premium"]),
-        "capacity_delayed_arrivals_pct": _pct(row["nas_delay_rate"]),
+        "aviation_system_delayed_arrivals_pct": _pct(row["nas_delay_rate"]),
     }
 
 
@@ -124,7 +127,7 @@ def rank_airports(
         runway_weight: Weight of the runway-pressure group (flights per runway, flight growth).
         terminal_weight: Weight of the terminal-pressure group (passenger growth, passengers-per-flight growth).
         unmet_demand_weight: Weight of the unmet-demand group (load factor, fare premium).
-        congestion_weight: Weight of the congestion group (capacity-caused delays).
+        congestion_weight: Weight of the congestion group (delays caused by the aviation system).
         top_n: Number of airports to return.
     """
     weights = {"runway_pressure": runway_weight, "terminal_pressure": terminal_weight,
@@ -196,8 +199,8 @@ def get_congestion_profile(airports: list[str]) -> ToolResult:
 
     Use for questions like "compare LAX and SNA congestion". Returns, per
     airport: flights per long runway (and its national percentile), share of
-    arriving flights delayed, share delayed by the aviation system (capacity),
-    and known constraints such as curfews or caps. Congestion is a profile, not
+    arriving flights delayed, share delayed by the aviation system (traffic,
+    airport operations, non-extreme weather), and known constraints such as curfews or caps. Congestion is a profile, not
     a single number — describe the pattern.
 
     Args:
@@ -224,16 +227,17 @@ def get_congestion_profile(airports: list[str]) -> ToolResult:
             "delay_month": None if delay is None else delay["month"],
             "arrivals_in_month": None if delay is None else _num(delay["arrivals"], 0),
             "delayed_arrivals_pct": None if delay is None else _num(delay["pct_delayed"]),
-            "capacity_delayed_arrivals_pct": None if delay is None else _num(delay["nas_delay_rate_pct"]),
-            "capacity_share_of_delays_pct": None if delay is None else _num(delay["nas_share_of_delays_pct"]),
-            "capacity_delay_percentile": _num(row["nas_delay_rate_pct"]),
+            "aviation_system_delayed_arrivals_pct": None if delay is None else _num(delay["nas_delay_rate_pct"]),
+            "aviation_system_share_of_delays_pct": None if delay is None else _num(delay["nas_share_of_delays_pct"]),
+            "aviation_system_delay_percentile": _num(row["nas_delay_rate_pct"]),
             "congestion_score": _num(row["congestion"]),
             "known_constraints": analysis.known_constraints(c),
         }
     caveats = [
         "Delays are one month (the latest BTS publishes), arrivals only, larger reporting airlines only — seasonal.",
-        "'Capacity-delayed' = delays BTS attributes to the National Aviation System (air traffic control, "
-        "airport operations, heavy traffic).",
+        "'Aviation-system delays' = delays BTS attributes to the National Aviation System (air traffic control, "
+        "airport operations, heavy traffic, non-extreme weather) — the closest BTS cause to a capacity "
+        "shortage, but not capacity alone.",
         f"Runway count (>= {metrics.MIN_RUNWAY_FT:,} ft) is a proxy for runway capacity; "
         "it ignores layout and procedures.",
         analysis.CONSTRAINTS_COVERAGE_CAVEAT,
@@ -297,7 +301,7 @@ def get_unmet_demand(airport: str) -> ToolResult:
     Use for questions like "what is the unmet demand at SFO, and why?". Returns
     an unmet-demand index (0-100: strength of signal — NOT a passenger count),
     the signals behind it (load factor, fare premium vs. similar-distance trips,
-    how busy the runways are, capacity-caused delays), a bottleneck label
+    how busy the runways are, aviation-system delays), a bottleneck label
     ("airport-constrained", "airline-side", "no unmet-demand signal" or "unknown"), the
     strong_candidate flag and known constraints. Always present it as an
     estimate, and explain the "why" from the signals and constraints.
@@ -321,8 +325,8 @@ def get_unmet_demand(airport: str) -> ToolResult:
             "fare_premium_percentile": _num(row["fare_premium_pct"]),
             "flights_per_long_runway": _num(row["flights_per_runway"], 0),
             "flights_per_long_runway_percentile": _num(row["flights_per_runway_pct"]),
-            "capacity_delayed_arrivals_pct": _pct(row["nas_delay_rate"]),
-            "capacity_delay_percentile": _num(row["nas_delay_rate_pct"]),
+            "aviation_system_delayed_arrivals_pct": _pct(row["nas_delay_rate"]),
+            "aviation_system_delay_percentile": _num(row["nas_delay_rate_pct"]),
         },
         "bottleneck": row["bottleneck"],
         "strong_candidate": bool(row["strong_candidate"]),

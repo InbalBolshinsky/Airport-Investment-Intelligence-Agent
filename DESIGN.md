@@ -18,7 +18,7 @@ Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─�
   | Runway pressure   | 30     | Flights per long runway (counts 2×); flight growth                  |
   | Terminal pressure | 30     | Passenger growth; growth in passengers per flight                   |
   | Unmet demand      | 30     | Load factor; fare premium vs. similar-distance trips                |
-  | Congestion        | 10     | Share of arriving flights delayed by the aviation system (capacity) |
+  | Congestion        | 10     | Share of arriving flights delayed by the aviation system (traffic, airport operations, non-extreme weather) |
 
 - **Why these weights:** pressure on the airport itself matters most, but an investor also needs signs of unmet demand. Congestion counts little because most delays come from weather and airlines. A runway that is busy today counts twice as much as growth: a full airport is a surer bet than one growing fast from a small base.
 - **Definitions:**
@@ -29,7 +29,7 @@ Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─�
   - Long-haul: over 3,000 miles (short < 800, medium in between; adjustable), passenger flights only.
 - **Percentiles:** each metric becomes a percentile (0–100) against all 226 ranked US airports (100k+ departing passengers in 2025). They are computed nationally, so a score never changes with the question asked.
 - **Size isn't scored**, because we don't know whether the investor prefers big or small airports. Answers show each airport's size and the analyst can filter by it. Counts are departing passengers, about half of what airports usually report.
-- **Bottleneck label:** "airport-constrained" means planes are full *and* the airport is among the busiest today (both ≥ 70th percentile). Full planes at an airport with room are "airline-side": airlines could add flights themselves. "Busy" is relative to other airports; true capacity isn't public.
+- **Bottleneck label:** "airport-constrained" means planes are full *and* the airport is among the busiest today by flights per long runway (both ≥ 70th percentile, i.e. top 30%: clearly above average, not rare). Full planes at an airport with room are "airline-side": airlines could add flights themselves. "Busy" is relative to other airports; true capacity isn't public. Delays are left out of the label: one month of them is noisy at small airports and includes weather (a foggy 135k-passenger airport ranked in the top 1% for delays).
 - **Strong candidate:** high score (≥ 70th percentile) *and* airport-constrained. Computed in code.
 - **Unmet demand** is an estimate: an index of how strong the signals are, not a count of passengers.
 - **Missing data:** an airport is scored on what it has and the answer lists what's missing. Nothing is filled in.
@@ -40,12 +40,12 @@ Public APIs + BTS downloads ─► SQLite ─► metrics & scoring (Python) ─�
 - **Need, not ROI.** Construction costs aren't public, so we score capacity need only.
 - **Percentiles, not raw scaling.** One extreme airport can't distort everyone else, but near-ties can look far apart, so raw values are shown too.
 - **No terminal-size data exists publicly.** Terminal pressure measures how fast pressure grows, not how full a terminal is.
-- **Rankings lean toward small, fast-growing airports.** Big hubs are busy but many are still below 2019 traffic, partly because growth at a busy airport is limited by its capacity. We kept size unscored and added the strong-candidate flag, so busy hubs aren't judged on growth alone. In New England the strong candidates are Portland, Burlington and Boston.
+- **Rankings lean toward small, fast-growing airports.** Big hubs are busy but many are still below 2019 traffic, partly because growth at a busy airport is limited by its capacity. We kept size unscored and added the strong-candidate flag, so busy hubs aren't judged on growth alone. In New England only Boston is a strong candidate; Bangor and Portland score higher but have room on their runways.
 - **Full planes are a hint, not proof.** Airlines want full planes. The score still rewards them a little at airports with room; the bottleneck label points this out.
 - **Two-year growth (2019 vs 2025).** Simple, but one unusual year distorts it.
 - **APIs, with exceptions.** Traffic, fares, runways and locations come from BTS, DOT and FAA APIs. Routes and delay causes are only published as downloads. Delays cover the latest single month (a full year takes ~2 hours to download), so they're seasonal. The data is a snapshot; one command rebuilds it in ~3 minutes.
 - **Partial data.** Fares cover 143 of 226 airports and none in Alaska or Hawaii. Known constraints (caps, curfews, runway spacing) are hand-checked, sourced and dated for SNA, SFO and LAX only.
-- **LangChain, not a plain SDK.** It gives easy model switching, fallbacks and conversation memory, but hides the agent loop and changes often. Conversations are kept in memory only.
+- **LangChain, not a plain SDK.** It gives easy model switching, fallbacks and conversation memory, but hides the agent loop and changes often. Conversations live in memory only: a refresh or restart starts a new one. Each turn resends the whole conversation, which suits short analyst sessions (from about turn 6, older tool results are trimmed to save quota); the Groq fallback's free-tier limit means it mainly helps early in a conversation.
 - **Out of scope:** airport finances, population growth, competition between nearby airports, room to expand.
 
 ## Where and how AI is used

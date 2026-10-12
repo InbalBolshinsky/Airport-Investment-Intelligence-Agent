@@ -1,4 +1,4 @@
-"""Voice input: turn a recorded question into text (D-60).
+"""Voice input: turn a recorded question into text.
 
 Groq Whisper first (fast, and uses Groq's quota rather than Gemini's); Gemini
 as the backup when there's no Groq key or Groq fails. The text then goes to

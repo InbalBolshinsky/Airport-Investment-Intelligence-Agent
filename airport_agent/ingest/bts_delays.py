@@ -2,7 +2,7 @@
 
 Source: BTS "Airline On-Time Statistics and Delay Causes" — the "Download Raw
 Data" link on TranStats, which returns a zip with Airline_Delay_Cause.csv for
-the most recent month (D-36: a full year is only available as ~2 h of
+the most recent month (a full year is only available as ~2 h of
 flight-level downloads).
 
 Cleaning:

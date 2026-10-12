@@ -62,7 +62,7 @@ def _constraints() -> pd.DataFrame:
 
 
 def known_constraints(airport: str) -> list[dict[str, str]]:
-    """Hand-checked, sourced and dated constraints for an airport (D-14), e.g. curfews or caps.
+    """Hand-checked, sourced and dated constraints for an airport, e.g. curfews or caps.
 
     Returns:
         [{"constraint", "source_url", "checked_on"}, ...]; empty if none listed.

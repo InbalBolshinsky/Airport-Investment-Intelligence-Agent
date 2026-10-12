@@ -15,14 +15,14 @@ import numpy as np
 import pandas as pd
 
 # --- Assumptions (all in one place) -------------------------------------------
-START_YEAR = 2019               # growth window start: last pre-COVID year (D-20)
+START_YEAR = 2019               # growth window start: last pre-COVID year
 END_YEAR = 2025                 # growth window end: latest full year
-MIN_PASSENGERS = 100_000        # airports below this in END_YEAR aren't ranked (D-5)
-MIN_RUNWAY_FT = 5_000           # runways long enough for airliners (D-42)
-PASSENGER_AIRCRAFT_CONFIG = 1   # BTS aircraft_config 1 = passenger aircraft (D-10, D-18)
-SMALL_BASE_PASSENGERS = 100_000 # START_YEAR traffic below this = "small base" growth (D-46)
-COVID_YEARS = (2020, 2021, 2022)  # flagged in yearly series; excluded from growth (D-20)
-SHORT_HAUL_MAX_MILES = 800      # default distance bands; adjustable per question (D-12)
+MIN_PASSENGERS = 100_000        # airports below this in END_YEAR aren't ranked
+MIN_RUNWAY_FT = 5_000           # runways long enough for airliners
+PASSENGER_AIRCRAFT_CONFIG = 1   # BTS aircraft_config 1 = passenger aircraft
+SMALL_BASE_PASSENGERS = 100_000 # START_YEAR traffic below this = "small base" growth
+COVID_YEARS = (2020, 2021, 2022)  # flagged in yearly series; excluded from growth
+SHORT_HAUL_MAX_MILES = 800      # default distance bands; adjustable per question
 LONG_HAUL_MIN_MILES = 3_000
 
 
@@ -72,7 +72,7 @@ def _annual_total(conn: sqlite3.Connection, column: str, year: int) -> pd.Series
 def flight_growth(conn: sqlite3.Connection) -> pd.Series:
     """Annualized growth in departures, START_YEAR -> END_YEAR (runway pressure).
 
-    Departures include cargo flights: runways serve every aircraft (D-11).
+    Departures include cargo flights: runways serve every aircraft.
     """
     return annualized_growth(
         _annual_total(conn, "departures", START_YEAR),
@@ -104,7 +104,7 @@ def long_runway_counts(conn: sqlite3.Connection) -> pd.Series:
 def flights_per_runway(conn: sqlite3.Connection) -> pd.Series:
     """END_YEAR departures per runway of at least MIN_RUNWAY_FT (runway pressure).
 
-    Missing for airports with no such runway in the FAA data (D-43).
+    Missing for airports with no such runway in the FAA data.
     Assumes runway count is a fair proxy for runway capacity; it ignores
     layout (e.g. closely spaced parallel runways) and air-traffic procedures.
     """
@@ -124,7 +124,7 @@ def _passengers_per_flight(conn: sqlite3.Connection, year: int) -> pd.Series:
 
 
 def passengers_per_flight_growth(conn: sqlite3.Connection) -> pd.Series:
-    """Annualized growth in passengers per passenger flight (terminal pressure, D-18).
+    """Annualized growth in passengers per passenger flight (terminal pressure).
 
     Rising = bigger or fuller planes: more people through the terminal per
     flight, which runway metrics don't see. Cargo flights excluded.
@@ -137,14 +137,14 @@ def passengers_per_flight_growth(conn: sqlite3.Connection) -> pd.Series:
 
 
 def load_factor(conn: sqlite3.Connection) -> pd.Series:
-    """END_YEAR passengers / seats (unmet demand: a hint, not proof — D-15)."""
+    """END_YEAR passengers / seats (unmet demand: a hint, not proof)."""
     passengers = _annual_total(conn, "passengers", END_YEAR)
     seats = _annual_total(conn, "seats", END_YEAR)
     return (passengers / seats.where(seats > 0)).rename("load_factor")
 
 
 def fare_curve(fares: pd.DataFrame) -> tuple[float, float]:
-    """Fit the national "typical fare for this distance" curve (D-47).
+    """Fit the national "typical fare for this distance" curve.
 
     log(fare) = intercept + slope * log(distance), least squares weighted by
     passengers so busy markets count more.
@@ -171,7 +171,7 @@ def fare_premium(conn: sqlite3.Connection) -> pd.Series:
     average over every market it is part of (either end). +0.12 = fares 12%
     above what similar-distance trips cost nationally — a sign seats are scarce.
 
-    Missing for airports with no listed market (D-44: DOT lists only markets
+    Missing for airports with no listed market (DOT lists only markets
     touching a multi-airport city; no Alaska/Hawaii).
     """
     fares = pd.read_sql(
@@ -192,10 +192,11 @@ def fare_premium(conn: sqlite3.Connection) -> pd.Series:
 
 
 def nas_delay_rate(conn: sqlite3.Connection) -> pd.Series:
-    """Share of arriving flights delayed by the National Aviation System (D-49).
+    """Share of arriving flights delayed by the National Aviation System.
 
-    NAS delays = air traffic control, airport operations, heavy traffic — the
-    capacity-related cause. Latest published month only (D-36).
+    NAS delays = air traffic control, airport operations, heavy traffic and
+    non-extreme weather — the closest BTS cause to a capacity shortage, but not
+    capacity alone. Latest published month only.
     """
     df = pd.read_sql(
         "SELECT airport, nas_ct, arr_flights FROM delays WHERE arr_flights > 0",
@@ -205,7 +206,7 @@ def nas_delay_rate(conn: sqlite3.Connection) -> pd.Series:
 
 
 def small_base(conn: sqlite3.Connection) -> pd.Series:
-    """True where START_YEAR passengers were below SMALL_BASE_PASSENGERS (D-46).
+    """True where START_YEAR passengers were below SMALL_BASE_PASSENGERS.
 
     Growth from such a base is likely a one-time step (e.g. new airline
     service), not a steady trend. No START_YEAR traffic at all counts as small.
@@ -221,7 +222,7 @@ def distance_mix(
     short_max_miles: float = SHORT_HAUL_MAX_MILES,
     long_min_miles: float = LONG_HAUL_MIN_MILES,
 ) -> dict[str, float] | None:
-    """Share of an airport's END_YEAR passenger departures in each distance band (D-10, D-12).
+    """Share of an airport's END_YEAR passenger departures in each distance band.
 
     Bands: short < short_max_miles; long > long_min_miles; medium in between.
     Passenger aircraft only — cargo excluded.
@@ -248,7 +249,7 @@ def distance_mix(
 
 
 def delay_profile(conn: sqlite3.Connection) -> pd.DataFrame:
-    """Delay picture per airport for the latest published month (D-13, D-36, D-49).
+    """Delay picture per airport for the latest published month.
 
     Returns:
         DataFrame indexed by airport: month ("YYYY-MM"), arrivals, pct_delayed

@@ -11,7 +11,7 @@ Cleaning:
 
 Known gaps:
 - Departures include ALL aircraft (passenger and cargo), which is what runway
-  metrics want (D-11); passengers per passenger flight comes from the route table.
+  metrics want; passengers per passenger flight comes from the route table.
 - "Origin airport" also includes foreign airports with flights to the US;
   they are dropped later by joining with the FAA list of US airports.
 - The most recent months may be preliminary and revised by BTS.

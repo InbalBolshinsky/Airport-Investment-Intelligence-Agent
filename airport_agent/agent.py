@@ -2,7 +2,9 @@
 
 The LLM chooses tools and explains their results; it never produces numbers
 itself. Conversation memory is kept in memory per thread_id, so follow-up
-questions see the earlier turns (lost on restart).
+questions see the earlier turns (lost on restart). In long conversations,
+older tool results are replaced with "[cleared]" in what is sent to the model;
+the stored history keeps them.
 """
 
 import json
@@ -10,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelFallbackMiddleware
+from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddleware, ModelFallbackMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -46,13 +48,21 @@ Answers:
 - Be concise; use a small table for 3+ airports.
 - End with "Sources & limits": source, data year and the 2-3 most relevant tool caveats. Never add \
 caveats of your own.
-- Follow-ups: resolve "it"/"those" from the conversation; call tools again for new numbers.
+- Follow-ups: resolve "it"/"those" from the conversation; call tools again for new numbers, or \
+when an earlier tool result shows [cleared].
 - If no tool covers the question (e.g. finances, non-US airports), say so."""
 
 # Fail fast instead of appearing frozen: the provider SDKs otherwise retry
 # overloaded requests quietly with growing waits. Healthy answers take ~2–5 s.
 MAX_RETRIES = 2
 REQUEST_TIMEOUT_SECONDS = 30
+
+# Long-conversation safety net: every model call resends the whole conversation.
+# Once it passes this many tokens (system prompt and tool schemas not counted),
+# all but the latest few tool results are sent as "[cleared]", saving quota and
+# keeping stale raw numbers out of view. Short demo sessions (~5 turns) never reach it.
+CLEAR_TOOL_RESULTS_ABOVE_TOKENS = 6_000
+TOOL_RESULTS_KEPT = 3
 
 
 @dataclass
@@ -104,13 +114,21 @@ def build_model(provider: str, model_name: str, max_retries: int = MAX_RETRIES) 
 def build_agent():
     """Create the agent: model + our six tools + system prompt + in-memory conversation memory.
 
+    Context editing comes first, so every model — fallbacks included — gets the
+    trimmed conversation (see CLEAR_TOOL_RESULTS_ABOVE_TOKENS). It edits a copy
+    of the request, so the stored history (and "How I got this") stays complete.
+
     If fallbacks are configured (and their providers have keys), LangChain's
     ModelFallbackMiddleware retries a failed model call (e.g. "high demand" or
     quota errors) on each fallback in order — by default Gemini Flash-Lite
     (separate quota), then Groq (separate provider). Only the last model gets
     SDK retries of its own: for the others, the next fallback is the retry.
     """
-    middleware = []
+    middleware = [
+        ContextEditingMiddleware(
+            edits=[ClearToolUsesEdit(trigger=CLEAR_TOOL_RESULTS_ABOVE_TOKENS, keep=TOOL_RESULTS_KEPT)]
+        )
+    ]
     main_retries = MAX_RETRIES
     fallbacks = settings.usable_fallbacks
     if fallbacks:

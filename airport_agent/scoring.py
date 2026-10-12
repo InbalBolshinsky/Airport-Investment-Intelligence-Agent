@@ -1,14 +1,14 @@
 """Scoring: metrics -> national percentiles -> group scores -> weighted total -> ranking.
 
-Rules (decision numbers refer to the design log):
-- Each metric becomes a percentile (0-100) against all ranked US airports (D-6, D-7).
+Rules:
+- Each metric becomes a percentile (0-100) against all ranked US airports.
   For every metric, higher = more pressure, so none is flipped.
 - A group score is the weighted mean of the group's available metric
   percentiles (METRIC_WEIGHTS; default 1); the total is the weighted mean of
   the available groups, weights rescaled over what the airport has. Nothing
-  is filled in (D-48).
+  is filled in.
 - Filters (region, state, size) are applied after national scoring, so an
-  airport's score never depends on the question asked (D-7).
+  airport's score never depends on the question asked.
 """
 
 import numpy as np
@@ -23,12 +23,14 @@ GROUPS: dict[str, list[str]] = {
     "congestion": ["nas_delay_rate"],
 }
 METRICS = [metric for group in GROUPS.values() for metric in group]
-DEFAULT_WEIGHTS = {"runway_pressure": 30, "terminal_pressure": 30, "unmet_demand": 30, "congestion": 10}  # D-9
+DEFAULT_WEIGHTS = {"runway_pressure": 30, "terminal_pressure": 30, "unmet_demand": 30, "congestion": 10}
+# Pressure on the airport matters most; congestion counts little because most delays
+# come from weather and airlines. A judgment call — the analyst can change them.
 # Weights of metrics inside their group (default 1). An airport that is busy
-# today is a surer bet than one growing fast from a small base (D-52).
+# today is a surer bet than one growing fast from a small base.
 METRIC_WEIGHTS = {"flights_per_runway": 2}
-BOTTLENECK_PERCENTILE = 70  # D-50
-STRONG_CANDIDATE_PERCENTILE = 70  # national percentile of total score (D-53)
+BOTTLENECK_PERCENTILE = 70  # "full" / "busy" = top 30% nationally: clearly above average, not rare
+STRONG_CANDIDATE_PERCENTILE = 70  # national percentile of total score; same cut-off as above
 
 METRIC_LABELS = {
     "flight_growth": "flight growth",
@@ -37,7 +39,7 @@ METRIC_LABELS = {
     "passengers_per_flight_growth": "passengers-per-flight growth",
     "load_factor": "load factor",
     "fare_premium": "fare premium",
-    "nas_delay_rate": "capacity-related delays",
+    "nas_delay_rate": "aviation-system delays",
 }
 SMALL_BASE_CAVEAT = (
     f"Growth starts from a small {START_YEAR} base (under {SMALL_BASE_PASSENGERS:,} passengers); "
@@ -76,22 +78,22 @@ def _check_weights(weights: dict[str, float] | None) -> pd.Series:
 
 
 def bottleneck_label(scored: pd.DataFrame) -> pd.Series:
-    """Who is the bottleneck? (D-15, D-50, D-51)
+    """Who is the bottleneck?
 
-    Judged on how busy the airport is NOW (flights per runway or capacity
-    delays, vs. other airports), not on growth; true capacity isn't public.
+    Judged on how busy the airport is NOW (flights per long runway vs. other
+    airports), not on growth; true capacity isn't public. Delays are left out:
+    one month of them is noisy at small airports and includes weather.
 
     - "airport-constrained": planes are full AND the airport is among the busiest
-      today (load factor and max(flights per runway, capacity delays) percentiles
-      >= BOTTLENECK_PERCENTILE) — a renovation could capture this demand.
+      today (load factor and flights-per-runway percentiles >= BOTTLENECK_PERCENTILE)
+      — a renovation could capture this demand.
     - "airline-side": planes are full but the airport has room — airlines could
       add flights themselves; a renovation is unlikely to help.
     - "no unmet-demand signal": planes are not unusually full.
     - "unknown": no load factor.
     """
     full = scored["load_factor_pct"] >= BOTTLENECK_PERCENTILE
-    busy_now = scored[["flights_per_runway_pct", "nas_delay_rate_pct"]].max(axis=1)
-    pressured = busy_now >= BOTTLENECK_PERCENTILE
+    pressured = scored["flights_per_runway_pct"] >= BOTTLENECK_PERCENTILE
     labels = np.select(
         [scored["load_factor_pct"].isna(), full & pressured, full],
         ["unknown", "airport-constrained", "airline-side"],
@@ -140,7 +142,7 @@ def score(metrics: pd.DataFrame, weights: dict[str, float] | None = None) -> pd.
     out["national_rank"] = out["total_score"].rank(ascending=False, method="min")
     out["bottleneck"] = bottleneck_label(out)
     # Both signals an investor needs: demand growing into capacity (high score)
-    # AND demand blocked by the airport today (D-53).
+    # AND demand blocked by the airport today.
     out["strong_candidate"] = (out["total_score_pct"] >= STRONG_CANDIDATE_PERCENTILE) & (
         out["bottleneck"] == "airport-constrained"
     )
@@ -164,7 +166,7 @@ def rank_airports(
         scored: output of score().
         area: US Census division or region, e.g. "New England" or "West" (case-insensitive).
         state: two-letter state code.
-        min_passengers / max_passengers: size range on annual passengers (D-5).
+        min_passengers / max_passengers: size range on annual passengers.
         top_n: keep only the first n.
 
     Returns:
