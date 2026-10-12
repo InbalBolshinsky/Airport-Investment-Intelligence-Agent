@@ -1,12 +1,8 @@
 """Deterministic airport metrics, computed from the local database.
 
-Metric functions return one value per airport: a pandas Series indexed by the
-BTS airport code (helpers that return other shapes say so). Nothing here is
-scored or ranked — that's scoring.py.
-A value that can't be computed (no runways, no fare markets, division by
-zero) is missing (NaN), never zero; scoring treats missing explicitly.
-
-Ratios and growth rates are fractions (0.823 = 82.3%).
+Each metric returns a pandas Series indexed by BTS airport code. A value that
+can't be computed (no runway, no fare market, division by zero) is NaN, never 0.
+Ratios and growth rates are fractions (0.823 = 82.3%). Scoring is in scoring.py.
 """
 
 import sqlite3
@@ -14,7 +10,7 @@ import sqlite3
 import numpy as np
 import pandas as pd
 
-# --- Assumptions (all in one place) -------------------------------------------
+# --- Assumptions ---------------------------------------------------------------
 START_YEAR = 2019               # growth window start: last pre-COVID year
 END_YEAR = 2025                 # growth window end: latest full year
 MIN_PASSENGERS = 100_000        # airports below this in END_YEAR aren't ranked
@@ -168,10 +164,10 @@ def fare_premium(conn: sqlite3.Connection) -> pd.Series:
     """How far an airport's fares sit above the typical fare for the same distance.
 
     Per market: actual fare / typical fare - 1. Per airport: passenger-weighted
-    average over every market it is part of (either end). +0.12 = fares 12%
-    above what similar-distance trips cost nationally — a sign seats are scarce.
+    average over its markets (either end). +0.12 = 12% above the national
+    typical fare, a sign seats are scarce.
 
-    Missing for airports with no listed market (DOT lists only markets
+    Missing when DOT lists no market for the airport (it lists only markets
     touching a multi-airport city; no Alaska/Hawaii).
     """
     fares = pd.read_sql(
@@ -195,7 +191,7 @@ def nas_delay_rate(conn: sqlite3.Connection) -> pd.Series:
     """Share of arriving flights delayed by the National Aviation System.
 
     NAS delays = air traffic control, airport operations, heavy traffic and
-    non-extreme weather — the closest BTS cause to a capacity shortage, but not
+    non-extreme weather: the closest BTS cause to a capacity shortage, but not
     capacity alone. Latest published month only.
     """
     df = pd.read_sql(

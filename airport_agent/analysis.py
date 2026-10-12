@@ -78,8 +78,8 @@ def resolve_airport(code: str) -> str:
         The upper-case code.
 
     Raises:
-        UnknownAirportError: why it isn't ranked (it has traffic), or close
-            matches by code, name or city (it isn't found).
+        UnknownAirportError: with the reason it isn't ranked, or close
+            matches by code, name or city.
     """
     clean = code.strip().upper()
     ranked = national_metrics()

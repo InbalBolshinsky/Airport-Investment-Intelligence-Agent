@@ -1,7 +1,6 @@
 """SQLite access: one local database file (DB_PATH), rebuilt by the ingest scripts.
 
-Every table is loaded together with a row in `data_sources` saying where it
-came from, when it was fetched, which period it covers and its known gaps —
+Each table has a row in `data_sources` (source, fetch date, period, known gaps);
 tools read their provenance from there.
 """
 

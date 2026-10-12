@@ -6,15 +6,13 @@ the DB1B 10% ticket sample.
 
 Cleaning:
 - Keep END_YEAR (all four quarters): airports, average fare, passengers per day,
-  non-stop market distance.
-- Converted to numbers. Each airport's fare premium is computed in the metric
-  code (passenger-weighted over its markets), not here.
+  non-stop distance; converted to numbers.
+- The fare premium per airport is computed in the metric code, not here.
 
 Known gaps:
-- DOT lists only markets where at least one end is in a city with several
+- DOT lists only markets with at least one end in a city with several
   commercial airports (e.g. New York, Chicago, LA, Boston). Airports with no
-  such market have no fare (143 of 226 airports with >= 100k passengers are
-  covered in 2025).
+  such market have no fare (143 of the 226 ranked airports are covered in 2025).
 - Markets are directionless (both directions added together).
 - Contiguous US only: no Alaska or Hawaii.
 """

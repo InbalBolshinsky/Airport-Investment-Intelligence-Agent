@@ -1,13 +1,11 @@
 """The six tools the LLM can call — the only part of the system it sees.
 
-Each tool is a thin wrapper: it validates inputs, calls deterministic code
-(metrics.py, scoring.py via analysis.py), and returns a ToolResult with
-provenance and caveats. Docstrings are sent to the LLM as the tool's
-instructions, so they say when to use the tool and what each input means.
+Each tool validates its inputs, calls the deterministic code and returns a
+ToolResult with provenance and caveats. The docstrings are the LLM's tool
+instructions: when to use the tool and what each input means.
 
-Output conventions: numbers are rounded; key suffixes carry units —
-`_pct` = a percentage (82.3 = 82.3%), `_percentile` = rank among the ranked
-US airports (0 = lowest, 100 = highest), scores are 0-100.
+Output keys: `_pct` = percentage (82.3 = 82.3%), `_percentile` = rank among
+ranked US airports (0 lowest, 100 highest). Scores are 0-100.
 """
 
 import math
@@ -223,8 +221,9 @@ def get_congestion_profile(airports: list[str]) -> ToolResult:
     Use for questions like "compare LAX and SNA congestion". Returns, per
     airport: flights per long runway (and its national percentile), share of
     arriving flights delayed, share delayed by the aviation system (traffic,
-    airport operations, non-extreme weather), and known constraints such as curfews or caps. Congestion is a profile, not
-    a single number — describe the pattern.
+    airport operations, non-extreme weather), and known constraints such as
+    curfews or caps. Congestion is a profile, not a single number — describe
+    the pattern.
 
     Args:
         airports: Airport codes (IATA), e.g. ["LAX", "SNA"].

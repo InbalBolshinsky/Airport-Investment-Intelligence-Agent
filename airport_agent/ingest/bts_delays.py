@@ -1,20 +1,18 @@
 """Arrival delays and their causes per airport, for the latest month BTS publishes.
 
-Source: BTS "Airline On-Time Statistics and Delay Causes" — the "Download Raw
-Data" link on TranStats, which returns a zip with Airline_Delay_Cause.csv for
-the most recent month (a full year is only available as ~2 h of
-flight-level downloads).
+Source: BTS "Airline On-Time Statistics and Delay Causes", via the TranStats
+"Download Raw Data" link: a zip with the latest month (a full year would take
+~2 h of flight-level downloads).
 
 Cleaning:
 - Summed over airlines to one row per airport and month.
-- Kept: arriving flights, flights 15+ min late, how many delays each cause
-  accounts for (airline, weather, National Aviation System = capacity/air
-  traffic control, security, late incoming aircraft), cancellations, and
-  delay minutes (total and NAS).
+- Kept: arrivals, arrivals 15+ min late, delay counts by cause (airline,
+  weather, National Aviation System, security, late incoming aircraft),
+  cancellations, and delay minutes (total and NAS).
 
 Known gaps:
-- One month only, so seasonal (re-running ingest picks up the newest month).
-- Arrivals at the airport; only the larger airlines that report on-time data.
+- One month only, so seasonal; re-running ingest gets the newest month.
+- Arrivals only; only the larger airlines that report on-time data.
 - Cause counts are fractional: BTS splits a delayed flight across causes.
 """
 

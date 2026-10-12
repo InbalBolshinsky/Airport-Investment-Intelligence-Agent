@@ -1,9 +1,5 @@
-"""The shape every tool returns to the agent.
-
-Architecture rule: every result carries its provenance — where the numbers
-came from, how recent they are, the caveats the agent must surface, and
-whether the value is measured or estimated.
-"""
+"""The shape every tool returns: the data plus its provenance (source, period,
+caveats, and whether it is measured or estimated)."""
 
 from typing import Any, TypedDict
 

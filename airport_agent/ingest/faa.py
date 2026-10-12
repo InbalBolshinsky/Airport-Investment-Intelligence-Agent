@@ -6,14 +6,14 @@ Atlas Database (NTAD), served as ArcGIS feature layers.
 Cleaning:
 - Airports: keep landing facilities of type "A" (airports; not heliports or
   seaplane bases), with code, name, city, state and coordinates.
-- Airports get a `bts_code` column for joining with BTS traffic: the same as
-  the FAA code, except for the few listed in reference/airport_codes.csv.
-- Runways: keep every runway of those airports with its length. The minimum
-  length that counts toward capacity is applied in the metric code, not here.
+- `bts_code` joins airports to BTS traffic: same as the FAA code, except for
+  the few in reference/airport_codes.csv.
+- Runways: every runway of those airports with its length. The minimum
+  length that counts is applied in the metric code.
 
 Known gaps:
-- Palm Beach International (PBI) is missing from the FAA dataset, so it has
-  no state or runway count and is not ranked at all.
+- Palm Beach International (PBI) is missing from the FAA dataset, so it is
+  not ranked.
 - Runway length alone does not say which aircraft can use a runway.
 """
 

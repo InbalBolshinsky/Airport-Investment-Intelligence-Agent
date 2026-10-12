@@ -1,19 +1,19 @@
 """Route-level traffic: departures, seats and passengers per origin–destination pair.
 
-Source: BTS "T-100 Segment (All Carriers)" on TranStats. BTS publishes this
-table only as a download form (no API), so we submit the form from code: load
-the form page, copy its hidden ASP.NET fields, tick the columns we need, and
-post it back; the response is a zip with one CSV.
+Source: BTS "T-100 Segment (All Carriers)" on TranStats. There is no API, only
+a download form, so we submit it from code: load the page, copy its hidden
+ASP.NET fields, tick the columns we need and post it back. The response is a
+zip with one CSV.
 
-Years: START_YEAR and END_YEAR, the endpoints of the growth window.
-END_YEAR gives the long-haul share; both give passengers per passenger flight.
+Years: START_YEAR and END_YEAR (the growth window). END_YEAR gives the
+long-haul share; both give passengers per passenger flight.
 
 Cleaning:
 - Summed over carriers and months to one row per year, origin, destination
   and aircraft configuration (keeps the table small).
 - aircraft_config: 1 = passenger, 2 = freight only, 3 = combined
-  passenger/freight, 4 = seaplane. Which ones count as "passenger flights" is
-  decided in the metric code.
+  passenger/freight, 4 = seaplane. The metric code decides which count as
+  passenger flights.
 
 Known gaps:
 - All carriers, including foreign airlines on US routes.

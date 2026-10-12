@@ -1,8 +1,7 @@
 """Runner: `python -m airport_agent.ingest [source ...]`.
 
-Runs every source (or the ones named) into the project database. A source
-that fails is reported and the others still run; the exit code is 1 if any
-source failed.
+Loads every source (or the ones named) into the project database. A failed
+source is reported and the others still run; exit code 1 if any failed.
 """
 
 import sys
@@ -12,7 +11,7 @@ from airport_agent.config import settings
 from airport_agent.db import connect
 from airport_agent.ingest import bts_delays, bts_routes, bts_traffic, dot_fares, faa, regions
 
-# Order matters only for readability of the log; sources are independent.
+# Sources are independent; the order only affects the log.
 SOURCES = {
     "regions": regions.ingest,
     "bts_traffic": bts_traffic.ingest,

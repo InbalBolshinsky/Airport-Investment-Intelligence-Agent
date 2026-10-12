@@ -4,17 +4,16 @@ Source: BTS "T-100 Segment Summary by Origin Airport" on the data.bts.gov
 Socrata API (dataset r495-tyji), January 2014 onwards.
 
 Cleaning:
-- Keep only the columns the metrics use; rename to plain names.
+- Keep the columns in COLUMNS, renamed to plain names.
 - `reporting_month` (a date) -> integer `year` and `month`.
-- Counts converted to numbers; a missing value stays missing (NULL), it is
-  not treated as zero.
+- Counts converted to numbers; a missing value stays NULL, not zero.
 
 Known gaps:
-- Departures include ALL aircraft (passenger and cargo), which is what runway
-  metrics want; passengers per passenger flight comes from the route table.
-- "Origin airport" also includes foreign airports with flights to the US;
-  they are dropped later by joining with the FAA list of US airports.
-- The most recent months may be preliminary and revised by BTS.
+- Departures include all aircraft (passenger and cargo), which is what runway
+  metrics want; passengers per passenger flight comes from the routes table.
+- Origin airports include foreign ones with flights to the US; the join with
+  the FAA list of US airports drops them later.
+- The latest months may be preliminary and revised by BTS.
 """
 
 import sqlite3

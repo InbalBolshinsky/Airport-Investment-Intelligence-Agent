@@ -1,11 +1,8 @@
 """The LangChain agent: an LLM that answers analyst questions by calling our tools.
 
-The LLM chooses tools and explains their results; it never produces numbers
-itself. Conversation memory is kept in memory per thread_id, so follow-up
-questions see the earlier turns (lost on restart). In long conversations,
-older tool results are replaced with "[cleared]" in what is sent to the model;
-the stored history keeps them. A tool that crashes returns an error message to
-the model instead of ending the turn (traceback in the terminal log).
+The LLM picks tools and explains their results; it never produces numbers.
+Each thread_id keeps its own conversation in memory (lost on restart), so
+follow-ups see earlier turns.
 """
 
 import json
@@ -63,15 +60,14 @@ when an earlier tool result shows [cleared]. If the analyst changed the weights,
 weights to compare_airports.
 - If no tool covers the question (e.g. finances, non-US airports), say so."""
 
-# Fail fast instead of appearing frozen: the provider SDKs otherwise retry
-# overloaded requests quietly with growing waits. Healthy answers take ~2–5 s.
+# Fail fast instead of looking frozen: provider SDKs otherwise retry overloaded
+# requests quietly with growing waits. Healthy answers take ~2–5 s.
 MAX_RETRIES = 2
 REQUEST_TIMEOUT_SECONDS = 30
 
-# Long-conversation safety net: every model call resends the whole conversation.
-# Once it passes this many tokens (system prompt and tool schemas not counted),
-# all but the latest few tool results are sent as "[cleared]", saving quota and
-# keeping stale raw numbers out of view. Short demo sessions (~5 turns) never reach it.
+# Every model call resends the whole conversation. Above this many tokens
+# (messages only, not system prompt or tool schemas), all but the latest
+# TOOL_RESULTS_KEPT tool results are sent as "[cleared]". A ~5-turn demo never hits it.
 CLEAR_TOOL_RESULTS_ABOVE_TOKENS = 6_000
 TOOL_RESULTS_KEPT = 3
 
@@ -138,18 +134,16 @@ def _tool_error_message(error: Exception, request: ToolCallRequest) -> str:
 
 
 def build_agent():
-    """Create the agent: model + our six tools + system prompt + in-memory conversation memory.
+    """Create the agent: model, six tools, system prompt and in-memory conversation memory.
 
-    Context editing comes first, so every model — fallbacks included — gets the
-    trimmed conversation (see CLEAR_TOOL_RESULTS_ABOVE_TOKENS). It edits a copy
-    of the request, so the stored history (and "How I got this") stays complete.
-    Tool crashes are returned to the model as error messages (_tool_error_message).
-
-    If fallbacks are configured (and their providers have keys), LangChain's
-    ModelFallbackMiddleware retries a failed model call (e.g. "high demand" or
-    quota errors) on each fallback in order — by default Gemini Flash-Lite
-    (separate quota), then Groq (separate provider). Only the last model gets
-    SDK retries of its own: for the others, the next fallback is the retry.
+    Middleware, in order:
+    - Context editing trims old tool results in a copy of each request, so every
+      model (fallbacks included) gets the short version and the stored history
+      ("How I got this") stays complete.
+    - Tool crashes go back to the model as error messages (_tool_error_message).
+    - If fallbacks have API keys, a failed model call (overload, quota) is
+      retried on each fallback in order. Only the last model gets SDK retries;
+      for the others, the next fallback is the retry.
     """
     middleware = [
         ContextEditingMiddleware(
