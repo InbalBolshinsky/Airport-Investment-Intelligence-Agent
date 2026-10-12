@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Project-specific ---
+# Private working notes and assistant instructions (not shipped)
+notes/
+CLAUDE.md
+.claude/
+
+# Local data: SQLite database and downloaded source files (rebuilt by the ingest scripts)
+data/
+*.db
+*.sqlite
+*.sqlite3

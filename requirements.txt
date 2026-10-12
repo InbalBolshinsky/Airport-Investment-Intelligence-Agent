@@ -1,0 +1,10 @@
+# Agent framework (LangChain) and conversation memory (LangGraph checkpointer)
+langchain==1.4.4
+langgraph==1.2.14
+
+# LLM provider connectors: Gemini (default) and Groq (switch via LLM_PROVIDER)
+langchain-google-genai==4.4.1
+langchain-groq==1.1.3
+
+# Reads settings from .env
+python-dotenv==1.2.4
