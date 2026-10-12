@@ -26,7 +26,21 @@ python -m airport_agent.ingest
 
 ## Run
 
+Chat in the browser (type or record a question; allow microphone access for voice):
+
+```bash
+streamlit run app.py
+```
+
+Or chat in the terminal:
+
 ```bash
 python -m airport_agent.cli                     # interactive chat (follow-up questions supported)
 python -m airport_agent.cli "Your question"     # single question
+```
+
+## Test
+
+```bash
+pytest
 ```

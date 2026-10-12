@@ -67,6 +67,7 @@ Public APIs + 2 BTS downloads ──► ingest scripts ──► SQLite
 
 - **The LLM does:** interpret the question, choose a tool and its arguments, map names to airport codes ("Santa Ana" → SNA), resolve follow-ups from conversation history ("why is it above Hartford?"), and write the explanation from tool output — including the caveats the tool returns.
 - **The LLM does not:** produce any number, score, rank, difference or estimate; decide which airports are in a region; clean or join data.
+- **Voice input:** a recorded question is transcribed by Groq Whisper (Gemini as backup) and shown as "heard: …" before the agent answers, so a misheard airport name is visible.
 - **Guardrails:** tools validate airport codes and suggest alternatives on unknown ones; every tool result carries source, data year and caveats; estimates are labelled as estimates; the system prompt forbids inventing numbers.
 - **Model:** Gemini 3.6 Flash (free tier) by default, with an automatic fallback chain — Gemini 3.5 Flash-Lite (separate quota), then Groq (separate provider) — so a quota or overload error doesn't stop the demo. Every answer shows which model wrote it. All reached through LangChain's prebuilt agent (`create_agent`) with six purpose-built tools.
 

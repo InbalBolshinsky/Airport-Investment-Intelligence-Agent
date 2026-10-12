@@ -13,5 +13,8 @@ python-dotenv==1.2.4
 requests==2.34.2
 pandas==3.0.6
 
+# Chat interface (with voice input)
+streamlit==1.65.0
+
 # Tests
 pytest==9.1.1

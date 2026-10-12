@@ -5,13 +5,14 @@ itself. Conversation memory is kept in memory per thread_id, so follow-up
 questions see the earlier turns (lost on restart).
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelFallbackMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import InMemorySaver
@@ -57,7 +58,7 @@ class AgentReply:
     """The agent's answer to one question, plus the tool calls behind it."""
 
     text: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)  # name, args, result
     model: str | None = None  # which model wrote the answer (the fallback, if the main one failed)
 
 
@@ -127,6 +128,14 @@ def build_agent():
     )
 
 
+def _parse_result(content: Any) -> Any:
+    """Tool results arrive as JSON text; turn them back into a dict when possible."""
+    try:
+        return json.loads(content)
+    except (TypeError, ValueError):
+        return content
+
+
 def ask(agent, question: str, thread_id: str) -> AgentReply:
     """Send one question to the agent and return its answer.
 
@@ -136,9 +145,9 @@ def ask(agent, question: str, thread_id: str) -> AgentReply:
         thread_id: Conversation id; reuse it so follow-ups see earlier turns.
 
     Returns:
-        The final answer text, the tool calls (name + arguments) made for this
-        question only — the basis for a "how I got this" view — and the model
-        that wrote the answer.
+        The final answer text, the tool calls made for this question only
+        (name, arguments and the tool's result — the basis for a "how I got
+        this" view), and the model that wrote the answer.
     """
     result = agent.invoke(
         {"messages": [HumanMessage(question)]},
@@ -149,8 +158,9 @@ def ask(agent, question: str, thread_id: str) -> AgentReply:
     # Keep only this turn: everything after the latest user message.
     last_user = max(i for i, m in enumerate(messages) if isinstance(m, HumanMessage))
     this_turn = messages[last_user + 1:]
+    results = {m.tool_call_id: _parse_result(m.content) for m in this_turn if isinstance(m, ToolMessage)}
     tool_calls = [
-        {"name": call["name"], "args": call["args"]}
+        {"name": call["name"], "args": call["args"], "result": results.get(call["id"])}
         for m in this_turn
         if isinstance(m, AIMessage)
         for call in m.tool_calls
