@@ -12,3 +12,6 @@ python-dotenv==1.2.4
 # Data ingestion: HTTP requests and table cleaning
 requests==2.34.2
 pandas==3.0.6
+
+# Tests
+pytest==9.1.1
