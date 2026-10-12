@@ -19,15 +19,32 @@ from langgraph.checkpoint.memory import InMemorySaver
 from airport_agent.config import settings
 from airport_agent.tools import ALL_TOOLS
 
-# Placeholder: core rules only. The full prompt is written with the real tools.
-SYSTEM_PROMPT = """You help analysts at a US airport-investment firm find airports \
-where added flight and passenger capacity is most needed.
+# Kept short on purpose: it is sent with every model call (free-tier token budget).
+SYSTEM_PROMPT = """You help analysts at a US airport-investment firm find US airports where demand \
+is outgrowing capacity, so renovation (more flight/passenger capacity) is most likely to pay off.
 
-Rules:
-- Answer facts only from tool results. Never state a number that is not in a tool result.
-- Always mention the caveats a tool returns, and its source and data year.
-- If a result has is_estimate = true, say clearly that it is an estimate.
-- If no tool can answer the question, say so instead of guessing."""
+Numbers:
+- Every fact and number must come from a tool result. Never estimate, invent or compute numbers \
+(no differences, sums or averages) — use compare_airports for differences.
+- Passenger counts are departing passengers; say so.
+- A higher percentile or score always means more pressure or need; no metric is reversed.
+- Terminal size and true airport capacity are not in the data; never describe them.
+
+Tools: rankings/candidates -> rank_airports (region = Census division/region, e.g. "New England"; \
+state = 2-letter code); "why is X above Y" -> compare_airports; congestion -> get_congestion_profile; \
+long-haul share -> get_flight_distance_mix; unmet demand -> get_unmet_demand; trend/size/details -> \
+get_airport_profile. Use airport codes (LA = LAX, Santa Ana = SNA). If a tool returns an error with \
+a suggestion, use it or ask the analyst.
+
+Answers:
+- Rankings: lead with strong candidates (high score AND airport-constrained), show each airport's size.
+- Congestion: describe the profile; don't reduce it to one number.
+- Unmet demand: call it an estimate; explain "why" from the signals and known constraints.
+- Be concise; use a small table for 3+ airports.
+- End with "Sources & limits": source, data year and the 2-3 most relevant tool caveats. Never add \
+caveats of your own.
+- Follow-ups: resolve "it"/"those" from the conversation; call tools again for new numbers.
+- If no tool covers the question (e.g. finances, non-US airports), say so."""
 
 # Fail fast instead of appearing frozen: the provider SDKs otherwise retry
 # overloaded requests quietly with growing waits. Healthy answers take ~2–5 s.
@@ -85,17 +102,21 @@ def build_model(provider: str, model_name: str, max_retries: int = MAX_RETRIES) 
 def build_agent():
     """Create the agent: model + our six tools + system prompt + in-memory conversation memory.
 
-    If a fallback is configured and its provider has a key, LangChain's
-    ModelFallbackMiddleware retries a failed model call (e.g. "high demand"
-    errors) on the fallback — by default Groq, so it doesn't share Google's
-    outages. The main model then gets no retries of its own: the fallback is
-    the retry.
+    If fallbacks are configured (and their providers have keys), LangChain's
+    ModelFallbackMiddleware retries a failed model call (e.g. "high demand" or
+    quota errors) on each fallback in order — by default Gemini Flash-Lite
+    (separate quota), then Groq (separate provider). Only the last model gets
+    SDK retries of its own: for the others, the next fallback is the retry.
     """
     middleware = []
     main_retries = MAX_RETRIES
-    if settings.fallback_enabled:
-        fallback = build_model(settings.fallback_provider, settings.fallback_model)
-        middleware.append(ModelFallbackMiddleware(fallback))
+    fallbacks = settings.usable_fallbacks
+    if fallbacks:
+        models = [
+            build_model(provider, model, max_retries=MAX_RETRIES if i == len(fallbacks) - 1 else 0)
+            for i, (provider, model) in enumerate(fallbacks)
+        ]
+        middleware.append(ModelFallbackMiddleware(*models))
         main_retries = 0
     return create_agent(
         build_model(settings.llm_provider, settings.llm_model, max_retries=main_retries),

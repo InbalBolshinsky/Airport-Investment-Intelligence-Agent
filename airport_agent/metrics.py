@@ -86,6 +86,17 @@ def passenger_growth(conn: sqlite3.Connection) -> pd.Series:
     ).rename("passenger_growth")
 
 
+def long_runway_counts(conn: sqlite3.Connection) -> pd.Series:
+    """Number of runways of at least MIN_RUNWAY_FT per airport (BTS code)."""
+    return pd.read_sql(
+        """SELECT a.bts_code AS airport, COUNT(*) AS runways
+           FROM runways r JOIN airports a ON a.airport = r.airport
+           WHERE r.length_ft >= ?
+           GROUP BY a.bts_code""",
+        conn, params=(MIN_RUNWAY_FT,), index_col="airport",
+    )["runways"].rename("long_runways")
+
+
 def flights_per_runway(conn: sqlite3.Connection) -> pd.Series:
     """END_YEAR departures per runway of at least MIN_RUNWAY_FT (runway pressure).
 
@@ -93,15 +104,8 @@ def flights_per_runway(conn: sqlite3.Connection) -> pd.Series:
     Assumes runway count is a fair proxy for runway capacity; it ignores
     layout (e.g. closely spaced parallel runways) and air-traffic procedures.
     """
-    runways = pd.read_sql(
-        """SELECT a.bts_code AS airport, COUNT(*) AS runways
-           FROM runways r JOIN airports a ON a.airport = r.airport
-           WHERE r.length_ft >= ?
-           GROUP BY a.bts_code""",
-        conn, params=(MIN_RUNWAY_FT,), index_col="airport",
-    )["runways"]
     departures = _annual_total(conn, "departures", END_YEAR)
-    return (departures / runways).rename("flights_per_runway")
+    return (departures / long_runway_counts(conn)).rename("flights_per_runway")
 
 
 def _passengers_per_flight(conn: sqlite3.Connection, year: int) -> pd.Series:
@@ -205,6 +209,71 @@ def small_base(conn: sqlite3.Connection) -> pd.Series:
     start = _annual_total(conn, "passengers", START_YEAR)
     airports = _annual_total(conn, "passengers", END_YEAR).index
     return (start.reindex(airports).fillna(0) < SMALL_BASE_PASSENGERS).rename("small_base")
+
+
+COVID_YEARS = (2020, 2021, 2022)  # flagged in yearly series; excluded from growth (D-20)
+
+
+def distance_mix(
+    conn: sqlite3.Connection, airport: str, short_max_miles: float = 800, long_min_miles: float = 3000
+) -> dict[str, float] | None:
+    """Share of an airport's END_YEAR passenger departures in each distance band (D-10, D-12).
+
+    Bands: short < short_max_miles; long > long_min_miles; medium in between.
+    Passenger aircraft only — cargo excluded.
+
+    Returns:
+        short_pct, medium_pct, long_pct (0-100) and passenger_departures,
+        or None if the airport has no passenger departures.
+    """
+    df = pd.read_sql(
+        "SELECT distance_mi, departures FROM routes WHERE origin = ? AND year = ? AND aircraft_config = ?",
+        conn, params=(airport, END_YEAR, PASSENGER_AIRCRAFT_CONFIG),
+    )
+    total = df["departures"].sum()
+    if not total:
+        return None
+    short = df.loc[df["distance_mi"] < short_max_miles, "departures"].sum()
+    long = df.loc[df["distance_mi"] > long_min_miles, "departures"].sum()
+    return {
+        "short_pct": 100 * short / total,
+        "medium_pct": 100 * (total - short - long) / total,
+        "long_pct": 100 * long / total,
+        "passenger_departures": float(total),
+    }
+
+
+def delay_profile(conn: sqlite3.Connection) -> pd.DataFrame:
+    """Delay picture per airport for the latest published month (D-13, D-36, D-49).
+
+    Returns:
+        DataFrame indexed by airport: month ("YYYY-MM"), arrivals, pct_delayed
+        (15+ min late), nas_delay_rate_pct (arrivals delayed by the aviation
+        system), nas_share_of_delays_pct.
+    """
+    df = pd.read_sql(
+        "SELECT airport, year, month, arr_flights, arr_del15, nas_ct FROM delays WHERE arr_flights > 0",
+        conn, index_col="airport",
+    )
+    return pd.DataFrame({
+        "month": df["year"].astype(str) + "-" + df["month"].astype(int).map("{:02d}".format),
+        "arrivals": df["arr_flights"],
+        "pct_delayed": 100 * df["arr_del15"] / df["arr_flights"],
+        "nas_delay_rate_pct": 100 * df["nas_ct"] / df["arr_flights"],
+        "nas_share_of_delays_pct": 100 * df["nas_ct"] / df["arr_del15"].where(df["arr_del15"] > 0),
+    })
+
+
+def yearly_series(conn: sqlite3.Connection, airport: str) -> pd.DataFrame:
+    """Departures, passengers and load factor per full year up to END_YEAR, COVID years flagged."""
+    df = pd.read_sql(
+        """SELECT year, SUM(departures) AS departures, SUM(passengers) AS passengers, SUM(seats) AS seats
+           FROM airport_monthly WHERE airport = ? AND year <= ? GROUP BY year ORDER BY year""",
+        conn, params=(airport, END_YEAR),
+    )
+    df["load_factor_pct"] = 100 * df["passengers"] / df["seats"].where(df["seats"] > 0)
+    df["covid_year"] = df["year"].isin(COVID_YEARS)
+    return df.drop(columns="seats")
 
 
 def all_metrics(conn: sqlite3.Connection) -> pd.DataFrame:

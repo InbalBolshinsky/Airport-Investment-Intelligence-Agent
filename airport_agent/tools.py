@@ -1,26 +1,94 @@
 """The six tools the LLM can call — the only part of the system it sees.
 
-Each tool is a thin wrapper: it validates inputs, calls deterministic code,
-and returns a ToolResult with provenance. Docstrings are sent to the LLM as
-the tool's instructions, so they say when to use the tool and what each
-input means.
+Each tool is a thin wrapper: it validates inputs, calls deterministic code
+(metrics.py, scoring.py via analysis.py), and returns a ToolResult with
+provenance and caveats. Docstrings are sent to the LLM as the tool's
+instructions, so they say when to use the tool and what each input means.
 
-SKELETON: every tool currently returns fake data marked with STUB_CAVEAT.
-The real metric and scoring code replaces the stub bodies; signatures stay.
+Output conventions: numbers are rounded; key suffixes carry units —
+`_pct` = a percentage (82.3 = 82.3%), `_percentile` = rank among the ranked
+US airports (0 = lowest, 100 = highest), scores are 0-100.
 """
 
+import math
+from typing import Any
+
+import pandas as pd
 from langchain.tools import tool
 
+from airport_agent import analysis, metrics, scoring
+from airport_agent.analysis import UnknownAirportError
+from airport_agent.db import connect
 from airport_agent.results import ToolResult, make_result
 
-STUB_SOURCE = "stub data (skeleton)"
-STUB_CAVEAT = "STUB DATA — not real; the skeleton returns fixed example values."
+SCORE_TABLES = ("airport_monthly", "routes", "fares", "delays", "runways", "airports", "regions")
+DEPARTING_CAVEAT = "Passengers = departing passengers only (~half of the total airports usually report)."
+SCORE_CAVEAT = "Scores are percentiles vs. all 226 ranked US airports; filters don't change scores."
+BUSY_CAVEAT = "'Airport-constrained' = among the busiest US airports (inferred), not measured capacity."
 
 
-def _clean_code(airport: str) -> str:
-    """Normalize an airport code (' sfo ' -> 'SFO'). Real validation comes later."""
-    return airport.strip().upper()
+# --- formatting helpers ---------------------------------------------------------
 
+def _num(value: Any, digits: int = 1) -> float | None:
+    """Round a number for the LLM; missing values become None."""
+    if value is None or (isinstance(value, float) and math.isnan(value)) or pd.isna(value):
+        return None
+    return round(float(value), digits)
+
+
+def _pct(fraction: Any) -> float | None:
+    """0.823 -> 82.3"""
+    return _num(None if pd.isna(fraction) else 100 * fraction)
+
+
+def _error(message: str) -> ToolResult:
+    """A result the LLM can relay (e.g. 'did you mean SNA?') instead of a crash."""
+    return make_result({"error": message}, source="input check", data_year="n/a", caveats=[])
+
+
+def _scored_result(data: dict, caveats: list[str], *, is_estimate: bool = False) -> ToolResult:
+    source, period = analysis.provenance(*SCORE_TABLES)
+    return make_result(data, source=source, data_year=period, caveats=caveats, is_estimate=is_estimate)
+
+
+def _group_scores(row: pd.Series) -> dict[str, float | None]:
+    return {group: _num(row[group]) for group in scoring.GROUPS}
+
+
+def _raw_metrics(row: pd.Series) -> dict[str, float | None]:
+    """The measured values behind the percentiles, with units in the key names."""
+    return {
+        "flight_growth_pct_per_year": _pct(row["flight_growth"]),
+        "flights_per_long_runway": _num(row["flights_per_runway"], 0),
+        "passenger_growth_pct_per_year": _pct(row["passenger_growth"]),
+        "passengers_per_flight_growth_pct_per_year": _pct(row["passengers_per_flight_growth"]),
+        "load_factor_pct": _pct(row["load_factor"]),
+        "fare_premium_pct": _pct(row["fare_premium"]),
+        "capacity_delayed_arrivals_pct": _pct(row["nas_delay_rate"]),
+    }
+
+
+def _percentiles(row: pd.Series) -> dict[str, float | None]:
+    return {f"{m}_percentile": _num(row[f"{m}_pct"]) for m in scoring.METRICS}
+
+
+def _summary(code: str, row: pd.Series) -> dict[str, Any]:
+    """One airport in a ranking: who, how big, how it scores, and its own caveats."""
+    return {
+        "airport": code,
+        "name": row["name"].title(),
+        "state": row["state"],
+        "departing_passengers_millions": _num(row["passengers"] / 1e6, 2),
+        "total_score": _num(row["total_score"]),
+        "national_rank": int(row["national_rank"]),
+        "group_scores": _group_scores(row),
+        "bottleneck": row["bottleneck"],
+        "strong_candidate": bool(row["strong_candidate"]),
+        "caveats": row["caveats"],
+    }
+
+
+# --- tools ----------------------------------------------------------------------
 
 @tool(parse_docstring=True)
 def rank_airports(
@@ -32,40 +100,55 @@ def rank_airports(
     terminal_weight: float = 30,
     unmet_demand_weight: float = 30,
     congestion_weight: float = 10,
-    top_n: int = 10,
+    top_n: int = 5,
 ) -> ToolResult:
     """Rank US airports by renovation score: how fast demand is outgrowing capacity.
 
     Use for questions like "which airports are strong candidates for expansion?".
     Returns airports ordered by total score (0-100), each with its four group
     scores (runway pressure, terminal pressure, unmet demand, congestion),
-    national percentile, regional rank and bottleneck label. Scores are
-    percentiles against all US airports; weights are relative and need not sum
-    to 100.
+    national rank, bottleneck label and strong_candidate flag, plus the list of
+    strong candidates in the whole selection. A strong candidate has BOTH a high
+    score and an airport-constrained bottleneck — lead with these. Weights are
+    relative and need not sum to 100.
 
     Args:
-        region: US Census region or division, e.g. "New England" or "Pacific". Omit for all US.
+        region: US Census region or division, e.g. "New England" or "West". Omit for all US.
         state: Two-letter US state code, e.g. "CA". Omit for no state filter.
-        min_passengers: Exclude airports with fewer annual passengers than this.
-        max_passengers: Exclude airports with more annual passengers than this. Omit for no upper limit.
-        runway_weight: Weight of the runway-pressure group (flight growth, flights per runway).
+        min_passengers: Exclude airports with fewer departing passengers per year than this.
+        max_passengers: Exclude airports with more departing passengers per year than this. Omit for no upper limit.
+        runway_weight: Weight of the runway-pressure group (flights per runway, flight growth).
         terminal_weight: Weight of the terminal-pressure group (passenger growth, passengers-per-flight growth).
-        unmet_demand_weight: Weight of the unmet-demand group (load factor, average fare).
-        congestion_weight: Weight of the congestion group (capacity-caused delay share).
+        unmet_demand_weight: Weight of the unmet-demand group (load factor, fare premium).
+        congestion_weight: Weight of the congestion group (capacity-caused delays).
         top_n: Number of airports to return.
     """
-    ranked = [
-        {"airport": "BOS", "total_score": 81.0, "regional_rank": 1, "bottleneck": "airport-constrained",
-         "groups": {"runway": 84.0, "terminal": 79.0, "unmet_demand": 83.0, "congestion": 72.0}},
-        {"airport": "BDL", "total_score": 64.0, "regional_rank": 2, "bottleneck": "airline-side",
-         "groups": {"runway": 55.0, "terminal": 68.0, "unmet_demand": 70.0, "congestion": 51.0}},
-    ]
-    return make_result(
-        {"region": region, "state": state, "airports": ranked[:top_n]},
-        source=STUB_SOURCE,
-        data_year="2019–2025",
-        caveats=[STUB_CAVEAT],
-    )
+    weights = {"runway_pressure": runway_weight, "terminal_pressure": terminal_weight,
+               "unmet_demand": unmet_demand_weight, "congestion": congestion_weight}
+    try:
+        scores = analysis.scores(None if weights == scoring.DEFAULT_WEIGHTS else weights)
+        selection = scoring.rank_airports(
+            scores, area=region, state=state, min_passengers=min_passengers, max_passengers=max_passengers,
+        )
+    except ValueError as error:
+        return _error(str(error))
+    if selection.empty:
+        return _error("No ranked airports match these filters.")
+
+    top = selection.head(top_n)
+    data = {
+        "selection": {"region": region, "state": state, "min_departing_passengers": min_passengers,
+                      "max_departing_passengers": max_passengers},
+        "airports_in_selection": len(selection),
+        "weights": weights,
+        "strong_candidates": selection.index[selection["strong_candidate"]].tolist(),
+        "airports": [
+            {**_summary(code, row), "regional_rank": int(row["regional_rank"])} for code, row in top.iterrows()
+        ],
+    }
+    caveats = [SCORE_CAVEAT, DEPARTING_CAVEAT, BUSY_CAVEAT,
+               "Rankings favor fast-growing smaller airports; many big hubs are still below 2019 traffic."]
+    return _scored_result(data, caveats)
 
 
 @tool(parse_docstring=True)
@@ -73,19 +156,33 @@ def compare_airports(airports: list[str]) -> ToolResult:
     """Compare two or more airports' renovation scores side by side.
 
     Use for follow-ups like "why is BOS above BDL?". Returns each airport's
-    total and group scores plus the differences between them, computed in code
-    — explain the ranking from these differences, never compute your own.
+    total, group scores and metric percentiles, the differences relative to the
+    first airport (computed in code — explain the ranking from these, never
+    compute your own), and the measured values behind them.
 
     Args:
         airports: Airport codes (IATA), e.g. ["BOS", "BDL"].
     """
-    codes = [_clean_code(a) for a in airports]
-    return make_result(
-        {"airports": codes, "scores": {c: {"total_score": 70.0} for c in codes}, "differences": {}},
-        source=STUB_SOURCE,
-        data_year="2019–2025",
-        caveats=[STUB_CAVEAT],
-    )
+    try:
+        codes = [analysis.resolve_airport(a) for a in airports]
+    except UnknownAirportError as error:
+        return _error(str(error))
+    scores = analysis.scores()
+    table = scoring.compare_airports(scores, codes).rename(index=lambda r: r.replace("_pct", "_percentile"))
+    first = codes[0]
+    data = {
+        "scores": {c: {r: _num(v) for r, v in table[c].items()} for c in codes},
+        "differences_vs_first": {
+            col: {r: _num(v) for r, v in table[col].items()} for col in table.columns if col not in codes
+        },
+        "measured_values": {c: _raw_metrics(scores.loc[c]) for c in codes},
+        "national_rank": {c: int(scores.loc[c, "national_rank"]) for c in codes},
+        "bottleneck": {c: scores.loc[c, "bottleneck"] for c in codes},
+        "strong_candidate": {c: bool(scores.loc[c, "strong_candidate"]) for c in codes},
+        "first_airport": first,
+    }
+    caveats = [SCORE_CAVEAT] + [f"{c}: {note}" for c in codes for note in scores.loc[c, "caveats"]]
+    return _scored_result(data, caveats)
 
 
 @tool(parse_docstring=True)
@@ -93,21 +190,49 @@ def get_congestion_profile(airports: list[str]) -> ToolResult:
     """Describe how congested one or more airports are, side by side.
 
     Use for questions like "compare LAX and SNA congestion". Returns, per
-    airport: flights per runway, share of flights delayed, share of delays
-    caused by the aviation system (capacity), known constraints such as
-    curfews or caps, and the live FAA status. Congestion is a profile, not a
-    single number — describe the pattern.
+    airport: flights per long runway (and its national percentile), share of
+    arriving flights delayed, share delayed by the aviation system (capacity),
+    and known constraints such as curfews or caps. Congestion is a profile, not
+    a single number — describe the pattern.
 
     Args:
         airports: Airport codes (IATA), e.g. ["LAX", "SNA"].
     """
-    codes = [_clean_code(a) for a in airports]
-    profile = {
-        c: {"flights_per_runway": 50_000, "pct_flights_delayed": 20.0, "nas_delay_share_pct": 30.0,
-            "known_constraints": [], "live_faa_status": "no active delays"}
-        for c in codes
-    }
-    return make_result(profile, source=STUB_SOURCE, data_year="2025", caveats=[STUB_CAVEAT])
+    try:
+        codes = [analysis.resolve_airport(a) for a in airports]
+    except UnknownAirportError as error:
+        return _error(str(error))
+    scores = analysis.scores()
+    with connect() as conn:
+        delays = metrics.delay_profile(conn)
+        runways = metrics.long_runway_counts(conn)
+
+    profiles = {}
+    for c in codes:
+        row = scores.loc[c]
+        delay = delays.loc[c] if c in delays.index else None
+        profiles[c] = {
+            "long_runways": int(runways.get(c, 0)),
+            "departures_2025": _num(row["flights_per_runway"] * runways.get(c, float("nan")), 0),
+            "flights_per_long_runway": _num(row["flights_per_runway"], 0),
+            "flights_per_long_runway_percentile": _num(row["flights_per_runway_pct"]),
+            "delay_month": None if delay is None else delay["month"],
+            "arrivals_in_month": None if delay is None else _num(delay["arrivals"], 0),
+            "delayed_arrivals_pct": None if delay is None else _num(delay["pct_delayed"]),
+            "capacity_delayed_arrivals_pct": None if delay is None else _num(delay["nas_delay_rate_pct"]),
+            "capacity_share_of_delays_pct": None if delay is None else _num(delay["nas_share_of_delays_pct"]),
+            "capacity_delay_percentile": _num(row["nas_delay_rate_pct"]),
+            "congestion_score": _num(row["congestion"]),
+            "known_constraints": analysis.known_constraints(c),
+        }
+    caveats = [
+        "Delays are one month (the latest BTS publishes), arrivals only, larger reporting airlines only — seasonal.",
+        "'Capacity-delayed' = delays BTS attributes to the National Aviation System (air traffic control, "
+        "airport operations, heavy traffic).",
+        "Runway count (>= 5,000 ft) is a proxy for runway capacity; it ignores layout and procedures.",
+        analysis.CONSTRAINTS_COVERAGE_CAVEAT,
+    ] + [f"{c}: no delay data for this airport." for c in codes if profiles[c]["delay_month"] is None]
+    return _scored_result(profiles, caveats)
 
 
 @tool(parse_docstring=True)
@@ -119,21 +244,43 @@ def get_flight_distance_mix(
     """Share of an airport's passenger departures that are short, medium and long-haul.
 
     Use for questions like "what % of flights out of Anchorage are long-haul?".
-    Returns the percentage of passenger departures in each distance band and
-    the band limits used. Cargo flights are excluded.
+    Returns the percentage of 2025 passenger departures in each distance band,
+    the band limits used, and how many departures were cargo flights (excluded).
+    State the band limits in the answer — there is no official definition.
 
     Args:
         airport: Airport code (IATA), e.g. "ANC".
         short_max_miles: Flights shorter than this many miles count as short-haul.
         long_min_miles: Flights longer than this many miles count as long-haul.
     """
-    return make_result(
-        {"airport": _clean_code(airport), "short_pct": 40.0, "medium_pct": 45.0, "long_pct": 15.0,
-         "bands_miles": {"short_below": short_max_miles, "long_above": long_min_miles}},
-        source=STUB_SOURCE,
-        data_year="2025",
-        caveats=[STUB_CAVEAT],
-    )
+    try:
+        code = analysis.resolve_airport(airport)
+    except UnknownAirportError as error:
+        return _error(str(error))
+    with connect() as conn:
+        mix = metrics.distance_mix(conn, code, short_max_miles, long_min_miles)
+        all_departures = conn.execute(
+            "SELECT SUM(departures) FROM routes WHERE origin = ? AND year = ?", (code, metrics.END_YEAR)
+        ).fetchone()[0]
+    if mix is None:
+        return _error(f"No passenger departures recorded for {code} in {metrics.END_YEAR}.")
+
+    data = {
+        "airport": code,
+        "year": metrics.END_YEAR,
+        "short_haul_pct": _num(mix["short_pct"]),
+        "medium_haul_pct": _num(mix["medium_pct"]),
+        "long_haul_pct": _num(mix["long_pct"]),
+        "bands_miles": {"short_below": short_max_miles, "long_above": long_min_miles},
+        "passenger_departures": _num(mix["passenger_departures"], 0),
+        "all_departures_including_cargo": _num(all_departures, 0),
+    }
+    caveats = [
+        "Passenger aircraft only; cargo flights are excluded (see all_departures_including_cargo).",
+        "Distance bands are a convention, not an official definition; distances are great-circle miles.",
+    ]
+    source, period = analysis.provenance("routes")
+    return make_result(data, source=source, data_year=f"{metrics.END_YEAR} ({period})", caveats=caveats)
 
 
 @tool(parse_docstring=True)
@@ -141,22 +288,52 @@ def get_unmet_demand(airport: str) -> ToolResult:
     """Estimate unmet demand at an airport and show the signals behind it.
 
     Use for questions like "what is the unmet demand at SFO, and why?". Returns
-    an unmet-demand index (0-100, strength of signal — not a passenger count),
-    the signals behind it (load factor, average fare, runway and terminal
-    pressure), a bottleneck label ("airport-constrained", "airline-side" or
-    "no unmet demand") and known constraints. Always present it as an estimate.
+    an unmet-demand index (0-100: strength of signal — NOT a passenger count),
+    the signals behind it (load factor, fare premium vs. similar-distance trips,
+    how busy the runways are, capacity-caused delays), a bottleneck label
+    ("airport-constrained", "airline-side" or "no unmet-demand signal"), the
+    strong_candidate flag and known constraints. Always present it as an
+    estimate, and explain the "why" from the signals and constraints.
 
     Args:
         airport: Airport code (IATA), e.g. "SFO".
     """
-    return make_result(
-        {"airport": _clean_code(airport), "unmet_demand_index": 75.0, "bottleneck": "airport-constrained",
-         "signals": {"load_factor_pct": 85.0, "avg_fare_usd": 400.0}, "known_constraints": []},
-        source=STUB_SOURCE,
-        data_year="2025",
-        caveats=[STUB_CAVEAT],
-        is_estimate=True,
-    )
+    try:
+        code = analysis.resolve_airport(airport)
+    except UnknownAirportError as error:
+        return _error(str(error))
+    row = analysis.scores().loc[code]
+    data = {
+        "airport": code,
+        "name": row["name"].title(),
+        "unmet_demand_index": _num(row["unmet_demand"]),
+        "signals": {
+            "load_factor_pct": _pct(row["load_factor"]),
+            "load_factor_percentile": _num(row["load_factor_pct"]),
+            "fare_premium_pct": _pct(row["fare_premium"]),
+            "fare_premium_percentile": _num(row["fare_premium_pct"]),
+            "flights_per_long_runway": _num(row["flights_per_runway"], 0),
+            "flights_per_long_runway_percentile": _num(row["flights_per_runway_pct"]),
+            "capacity_delayed_arrivals_pct": _pct(row["nas_delay_rate"]),
+            "capacity_delay_percentile": _num(row["nas_delay_rate_pct"]),
+        },
+        "bottleneck": row["bottleneck"],
+        "strong_candidate": bool(row["strong_candidate"]),
+        "total_score": _num(row["total_score"]),
+        "national_rank": int(row["national_rank"]),
+        "known_constraints": analysis.known_constraints(code),
+    }
+    caveats = [
+        "Unmet demand can't be measured, only inferred: the index is the strength of signals, not a count "
+        "of passengers who couldn't fly.",
+        "Full planes are a hint, not proof — airlines want full planes; they point to a renovation "
+        "opportunity only when the airport itself is busy ('airport-constrained').",
+        BUSY_CAVEAT,
+        "Fare premium compares fares with the national typical fare for the same trip distance (2025).",
+        analysis.CONSTRAINTS_COVERAGE_CAVEAT,
+        *row["caveats"],
+    ]
+    return _scored_result(data, caveats, is_estimate=True)
 
 
 @tool(parse_docstring=True)
@@ -164,19 +341,42 @@ def get_airport_profile(airport: str) -> ToolResult:
     """Full detail for one airport: every metric and its yearly history.
 
     Use for follow-ups like "show me SFO's trend" or "how big is BDL?".
-    Returns raw metric values, national percentiles, annual passengers, and
-    the yearly series 2014-2025 with COVID years (2020-2022) flagged.
+    Returns departing passengers, measured metric values and their national
+    percentiles, group scores and rank, and the yearly series 2014-2025 with
+    COVID years (2020-2022) flagged.
 
     Args:
         airport: Airport code (IATA), e.g. "SFO".
     """
-    return make_result(
-        {"airport": _clean_code(airport), "annual_passengers": 1_000_000,
-         "yearly": [{"year": 2019, "passengers": 1_000_000, "covid_year": False}]},
-        source=STUB_SOURCE,
-        data_year="2014–2025",
-        caveats=[STUB_CAVEAT],
-    )
+    try:
+        code = analysis.resolve_airport(airport)
+    except UnknownAirportError as error:
+        return _error(str(error))
+    row = analysis.scores().loc[code]
+    with connect() as conn:
+        yearly = metrics.yearly_series(conn, code)
+    data = {
+        "airport": code,
+        "name": row["name"].title(),
+        "city": row["city"].title(),
+        "state": row["state"],
+        "census_division": row["division"],
+        "departing_passengers_2025": _num(row["passengers"], 0),
+        "measured_values": _raw_metrics(row),
+        "percentiles": _percentiles(row),
+        "group_scores": _group_scores(row),
+        "total_score": _num(row["total_score"]),
+        "national_rank": int(row["national_rank"]),
+        "bottleneck": row["bottleneck"],
+        "strong_candidate": bool(row["strong_candidate"]),
+        "yearly": [
+            {"year": int(y.year), "departures": int(y.departures), "departing_passengers": int(y.passengers),
+             "load_factor_pct": _num(y.load_factor_pct), "covid_year": bool(y.covid_year)}
+            for y in yearly.itertuples()
+        ],
+    }
+    caveats = [DEPARTING_CAVEAT, "Growth rates compare 2019 with 2025 (COVID years skipped).", *row["caveats"]]
+    return _scored_result(data, caveats)
 
 
 ALL_TOOLS = [

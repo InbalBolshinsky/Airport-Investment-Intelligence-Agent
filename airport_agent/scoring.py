@@ -22,7 +22,7 @@ GROUPS: dict[str, list[str]] = {
 }
 METRICS = [metric for group in GROUPS.values() for metric in group]
 DEFAULT_WEIGHTS = {"runway_pressure": 30, "terminal_pressure": 30, "unmet_demand": 30, "congestion": 10}  # D-9
-# Weights of metrics inside their group (default 1). An airport that is full
+# Weights of metrics inside their group (default 1). An airport that is busy
 # today is a surer bet than one growing fast from a small base (D-52).
 METRIC_WEIGHTS = {"flights_per_runway": 2}
 BOTTLENECK_PERCENTILE = 70  # D-50
@@ -77,11 +77,12 @@ def bottleneck_label(scored: pd.DataFrame) -> pd.Series:
     """Who is the bottleneck? (D-15, D-50, D-51)
 
     The question is "could airlines add flights here today?", so the airport
-    side is judged on how full it is NOW — flights per runway or
-    capacity-caused delays — not on growth.
+    side is judged on how busy it is NOW — flights per runway or
+    capacity-caused delays — not on growth. "Busy" is inferred from these
+    proxies relative to other airports; true capacity isn't in public data.
 
-    - "airport-constrained": planes are full AND the airport is full now
-      (load factor and max(flights per runway, capacity delays) percentiles
+    - "airport-constrained": planes are full AND the airport is among the busiest
+      today (load factor and max(flights per runway, capacity delays) percentiles
       >= BOTTLENECK_PERCENTILE) — a renovation could capture this demand.
     - "airline-side": planes are full but the airport has room — airlines could
       add flights themselves; a renovation is unlikely to help.

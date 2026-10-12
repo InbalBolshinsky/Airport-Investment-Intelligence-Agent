@@ -34,8 +34,7 @@ class Settings:
     gemini_model: str
     gemini_thinking_level: str
     groq_model: str
-    fallback_provider: str  # "" = no fallback
-    fallback_model: str
+    fallbacks: tuple[tuple[str, str], ...]  # (provider, model) tried in order if the main model fails
     db_path: Path
     google_api_key: str = field(repr=False)
     groq_api_key: str = field(repr=False)
@@ -70,9 +69,9 @@ class Settings:
         return self.api_key(self.llm_provider)
 
     @property
-    def fallback_enabled(self) -> bool:
-        """A fallback is used only if it is configured and its provider has a key."""
-        return bool(self.fallback_provider and self.fallback_model and self.has_api_key(self.fallback_provider))
+    def usable_fallbacks(self) -> list[tuple[str, str]]:
+        """Configured fallbacks whose provider has a key; the others are skipped quietly."""
+        return [(provider, model) for provider, model in self.fallbacks if self.has_api_key(provider)]
 
 
 def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
@@ -83,12 +82,23 @@ def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
     return value
 
 
+def _fallbacks(value: str) -> tuple[tuple[str, str], ...]:
+    """Parse FALLBACKS, e.g. "gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-120b"."""
+    pairs = []
+    for item in filter(None, (part.strip() for part in value.split(","))):
+        provider, _, model = item.partition(":")
+        if provider.lower() not in SUPPORTED_PROVIDERS or not model:
+            raise ConfigError(f"FALLBACKS entries must look like 'gemini:<model>' or 'groq:<model>', got '{item}'.")
+        pairs.append((provider.lower(), model.strip()))
+    return tuple(pairs)
+
+
 def load_settings() -> Settings:
     """Build Settings from environment variables (already loaded from .env).
 
     Raises:
-        ConfigError: if LLM_PROVIDER, FALLBACK_PROVIDER or GEMINI_THINKING_LEVEL
-            has an unsupported value.
+        ConfigError: if LLM_PROVIDER, FALLBACKS or GEMINI_THINKING_LEVEL has an
+            unsupported value.
     """
     db_path = Path(os.getenv("DB_PATH", "data/airports.db"))
     if not db_path.is_absolute():
@@ -99,8 +109,7 @@ def load_settings() -> Settings:
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip(),
         gemini_thinking_level=_choice("GEMINI_THINKING_LEVEL", "low", GEMINI_THINKING_LEVELS),
         groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip(),
-        fallback_provider=_choice("FALLBACK_PROVIDER", "groq", ("", *SUPPORTED_PROVIDERS)),
-        fallback_model=os.getenv("FALLBACK_MODEL", "openai/gpt-oss-120b").strip(),
+        fallbacks=_fallbacks(os.getenv("FALLBACKS", "gemini:gemini-3.5-flash-lite,groq:openai/gpt-oss-120b")),
         db_path=db_path,
         google_api_key=os.getenv("GOOGLE_API_KEY", "").strip(),
         groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
