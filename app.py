@@ -15,7 +15,7 @@ import streamlit as st
 
 from airport_agent.agent import ask, build_agent
 from airport_agent.config import ConfigError, settings
-from airport_agent.db import connect
+from airport_agent.db import connect, data_problem
 from airport_agent.voice import VoiceError, transcribe
 
 EXAMPLES = [
@@ -30,8 +30,9 @@ st.set_page_config(page_title="Airport Investment Agent", page_icon="✈️", la
 
 def setup_problem() -> str | None:
     """A setup step the user still has to do, or None if ready."""
-    if not settings.db_path.exists():
-        return "No data yet. Run `python -m airport_agent.ingest` first (about 3 minutes), then reload."
+    problem = data_problem()
+    if problem:
+        return f"{problem} Then reload this page."
     try:
         settings.llm_api_key()
     except ConfigError as error:

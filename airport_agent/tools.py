@@ -45,6 +45,11 @@ def _pct(fraction: Any) -> float | None:
     return _num(None if pd.isna(fraction) else 100 * fraction)
 
 
+def _rank(value: Any) -> int | None:
+    """A rank for the LLM; None when the airport has no total score (scoring.NO_SCORE_CAVEAT)."""
+    return None if pd.isna(value) else int(value)
+
+
 def _error(message: str) -> ToolResult:
     """A result the LLM can relay (e.g. 'did you mean SNA?') instead of a crash."""
     return make_result({"error": message}, source="input check", data_year="n/a", caveats=[])
@@ -89,7 +94,7 @@ def _summary(code: str, row: pd.Series) -> dict[str, Any]:
         "state": row["state"],
         "departing_passengers_millions": _num(row["passengers"] / 1e6, 2),
         "total_score": _num(row["total_score"]),
-        "national_rank": int(row["national_rank"]),
+        "national_rank": _rank(row["national_rank"]),
         "group_scores": _group_scores(row),
         "bottleneck": row["bottleneck"],
         "strong_candidate": bool(row["strong_candidate"]),
@@ -152,7 +157,7 @@ def rank_airports(
         "weights": weights,
         "strong_candidates": selection.index[selection["strong_candidate"]].tolist(),
         "airports": [
-            {**_summary(code, row), "regional_rank": int(row["regional_rank"])} for code, row in top.iterrows()
+            {**_summary(code, row), "regional_rank": _rank(row["regional_rank"])} for code, row in top.iterrows()
         ],
     }
     caveats = [_score_caveat(), DEPARTING_CAVEAT, BUSY_CAVEAT,
@@ -187,10 +192,12 @@ def compare_airports(
     weights = {"runway_pressure": runway_weight, "terminal_pressure": terminal_weight,
                "unmet_demand": unmet_demand_weight, "congestion": congestion_weight}
     try:
-        codes = [analysis.resolve_airport(a) for a in airports]
+        codes = list(dict.fromkeys(analysis.resolve_airport(a) for a in airports))  # each airport once
         scores = analysis.scores(None if weights == scoring.DEFAULT_WEIGHTS else weights)
     except ValueError as error:  # unknown airport or invalid weights
         return _error(str(error))
+    if len(codes) < 2:
+        return _error("Give at least two different airports to compare.")
     table = scoring.compare_airports(scores, codes).rename(index=lambda r: r.replace("_pct", "_percentile"))
     first = codes[0]
     data = {
@@ -199,7 +206,7 @@ def compare_airports(
             col: {r: _num(v) for r, v in table[col].items()} for col in table.columns if col not in codes
         },
         "measured_values": {c: _raw_metrics(scores.loc[c]) for c in codes},
-        "national_rank": {c: int(scores.loc[c, "national_rank"]) for c in codes},
+        "national_rank": {c: _rank(scores.loc[c, "national_rank"]) for c in codes},
         "bottleneck": {c: scores.loc[c, "bottleneck"] for c in codes},
         "strong_candidate": {c: bool(scores.loc[c, "strong_candidate"]) for c in codes},
         "first_airport": first,
@@ -353,7 +360,7 @@ def get_unmet_demand(airport: str) -> ToolResult:
         "bottleneck": row["bottleneck"],
         "strong_candidate": bool(row["strong_candidate"]),
         "total_score": _num(row["total_score"]),
-        "national_rank": int(row["national_rank"]),
+        "national_rank": _rank(row["national_rank"]),
         "known_constraints": analysis.known_constraints(code),
     }
     caveats = [
@@ -401,7 +408,7 @@ def get_airport_profile(airport: str) -> ToolResult:
         "percentiles": _percentiles(row),
         "group_scores": _group_scores(row),
         "total_score": _num(row["total_score"]),
-        "national_rank": int(row["national_rank"]),
+        "national_rank": _rank(row["national_rank"]),
         "bottleneck": row["bottleneck"],
         "strong_candidate": bool(row["strong_candidate"]),
         "yearly": [

@@ -61,6 +61,14 @@ def test_missing_group_rescales_weights():
     assert a["total_score"] == pytest.approx(expected)
 
 
+def test_no_data_in_any_weighted_group_gives_no_score_and_a_caveat():
+    congestion_only = {group: 0 for group in scoring.GROUPS} | {"congestion": 1}
+    scored = scoring.score(make_metrics(nas_delay_rate=[np.nan, 1.0, 2.0, 3.0]), weights=congestion_only)
+    assert pd.isna(scored.loc["A", "total_score"]) and pd.isna(scored.loc["A", "national_rank"])
+    assert scoring.NO_SCORE_CAVEAT in scored.loc["A", "caveats"]
+    assert scoring.NO_SCORE_CAVEAT not in scored.loc["B", "caveats"]
+
+
 # --- outliers -----------------------------------------------------------------
 
 def test_extreme_outlier_does_not_move_other_airports_percentiles():

@@ -4,15 +4,23 @@ The LLM chooses tools and explains their results; it never produces numbers
 itself. Conversation memory is kept in memory per thread_id, so follow-up
 questions see the earlier turns (lost on restart). In long conversations,
 older tool results are replaced with "[cleared]" in what is sent to the model;
-the stored history keeps them.
+the stored history keeps them. A tool that crashes returns an error message to
+the model instead of ending the turn (traceback in the terminal log).
 """
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddleware, ModelFallbackMiddleware
+from langchain.agents.middleware import (
+    ClearToolUsesEdit,
+    ContextEditingMiddleware,
+    ModelFallbackMiddleware,
+    ToolCallRequest,
+    ToolErrorMiddleware,
+)
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -21,6 +29,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from airport_agent.config import settings
 from airport_agent.tools import ALL_TOOLS
+
+logger = logging.getLogger(__name__)
 
 # Kept short on purpose: it is sent with every model call (free-tier token budget).
 SYSTEM_PROMPT = """You help analysts at a US airport-investment firm find US airports where demand \
@@ -112,12 +122,28 @@ def build_model(provider: str, model_name: str, max_retries: int = MAX_RETRIES) 
     )
 
 
+def _tool_error_message(error: Exception, request: ToolCallRequest) -> str:
+    """Turn a tool crash into a message the model relays to the analyst.
+
+    Without this the exception ends the turn and leaves an unanswered tool call
+    in the stored conversation, which the providers reject on every later turn.
+    The model sees only the tool name and error type; the traceback goes to the log.
+    """
+    name = request.tool_call["name"]
+    logger.error("Tool %s failed", name, exc_info=error)
+    return (
+        f"{name} hit an internal error ({type(error).__name__}) and returned no data. "
+        "Tell the analyst this tool could not answer; do not estimate the numbers yourself."
+    )
+
+
 def build_agent():
     """Create the agent: model + our six tools + system prompt + in-memory conversation memory.
 
     Context editing comes first, so every model — fallbacks included — gets the
     trimmed conversation (see CLEAR_TOOL_RESULTS_ABOVE_TOKENS). It edits a copy
     of the request, so the stored history (and "How I got this") stays complete.
+    Tool crashes are returned to the model as error messages (_tool_error_message).
 
     If fallbacks are configured (and their providers have keys), LangChain's
     ModelFallbackMiddleware retries a failed model call (e.g. "high demand" or
@@ -128,7 +154,8 @@ def build_agent():
     middleware = [
         ContextEditingMiddleware(
             edits=[ClearToolUsesEdit(trigger=CLEAR_TOOL_RESULTS_ABOVE_TOKENS, keep=TOOL_RESULTS_KEPT)]
-        )
+        ),
+        ToolErrorMiddleware(_tool_error_message),
     ]
     main_retries = MAX_RETRIES
     fallbacks = settings.usable_fallbacks

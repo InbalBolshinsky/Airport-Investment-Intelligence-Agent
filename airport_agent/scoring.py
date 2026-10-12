@@ -45,6 +45,10 @@ SMALL_BASE_CAVEAT = (
     f"Growth starts from a small {START_YEAR} base (under {SMALL_BASE_PASSENGERS:,} passengers); "
     "likely a one-time step (e.g. new airline service), not a steady trend."
 )
+NO_SCORE_CAVEAT = (
+    "No total score or rank with these weights: every group with a positive weight "
+    "is missing data for this airport."
+)
 
 
 def percentile_ranks(values: pd.Series) -> pd.Series:
@@ -103,8 +107,9 @@ def bottleneck_label(scored: pd.DataFrame) -> pd.Series:
 
 
 def airport_caveats(row: pd.Series) -> list[str]:
-    """Caveats that belong to one airport's result: small-base growth, missing metrics."""
-    caveats = [SMALL_BASE_CAVEAT] if row.get("small_base") else []
+    """Caveats that belong to one airport's result: no total score, small-base growth, missing metrics."""
+    caveats = [NO_SCORE_CAVEAT] if pd.isna(row.get("total_score")) else []
+    caveats += [SMALL_BASE_CAVEAT] if row.get("small_base") else []
     caveats += [
         f"No {METRIC_LABELS[m]} data for this airport; scored on its other metrics."
         for m in METRICS if pd.isna(row[m])

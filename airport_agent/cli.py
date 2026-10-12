@@ -10,6 +10,7 @@ import uuid
 
 from airport_agent.agent import AgentReply, ask, build_agent
 from airport_agent.config import ConfigError
+from airport_agent.db import data_problem
 
 
 def format_reply(reply: AgentReply) -> str:
@@ -34,6 +35,10 @@ def answer(agent, question: str, thread_id: str) -> str:
 
 def main() -> int:
     """Answer a single question from the command line, or run an interactive chat."""
+    problem = data_problem()
+    if problem:
+        print(problem)
+        return 1
     try:
         agent = build_agent()
     except ConfigError as error:
