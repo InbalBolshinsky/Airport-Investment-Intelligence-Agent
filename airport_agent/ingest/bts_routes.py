@@ -5,8 +5,8 @@ table only as a download form (no API), so we submit the form from code: load
 the form page, copy its hidden ASP.NET fields, tick the columns we need, and
 post it back; the response is a zip with one CSV.
 
-Years: 2019 and 2025 — the endpoints of the growth window (D-20). 2025 gives
-the long-haul share; both give passengers per passenger flight (D-18).
+Years: START_YEAR and END_YEAR, the endpoints of the growth window (D-20).
+END_YEAR gives the long-haul share; both give passengers per passenger flight (D-18).
 
 Cleaning:
 - Summed over carriers and months to one row per year, origin, destination
@@ -29,9 +29,10 @@ import pandas as pd
 
 from airport_agent.db import record_source, replace_table
 from airport_agent.ingest._http import session
+from airport_agent.metrics import END_YEAR, START_YEAR
 
 FORM_URL = "https://www.transtats.bts.gov/DL_SelectFields.aspx?gnoyr_VQ=FMG&QO_fu146_anzr=Nv4%20Pn44vr45"
-YEARS = (2019, 2025)
+YEARS = (START_YEAR, END_YEAR)
 FIELDS = ["YEAR", "ORIGIN", "DEST", "DISTANCE", "DEPARTURES_PERFORMED", "SEATS", "PASSENGERS", "AIRCRAFT_CONFIG"]
 DATA_FILE = "T_T100_SEGMENT_ALL_CARRIER.csv"
 DOWNLOAD_TIMEOUT_SECONDS = 600  # BTS builds the file on request; a year takes ~1.5 min

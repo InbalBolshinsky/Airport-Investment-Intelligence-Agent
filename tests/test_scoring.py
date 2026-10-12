@@ -125,7 +125,7 @@ def test_strong_candidate_needs_high_score_and_airport_constraint():
     scored = scoring.score(make_metrics(n=6))
     assert bool(scored.loc["F", "strong_candidate"]) is True     # top score, airport-constrained
     assert bool(scored.loc["A", "strong_candidate"]) is False    # lowest score, planes not full
-    # high score but the airport has room (nothing "full now") -> not a strong candidate
+    # high score but the airport has room (nothing "busy now") -> not a strong candidate
     roomy = scoring.score(make_metrics(n=6, flights_per_runway=[6.0, 5, 4, 3, 2, 1], nas_delay_rate=[6.0, 5, 4, 3, 2, 1]))
     assert roomy.loc["F", "bottleneck"] == "airline-side"
     assert bool(roomy.loc["F", "strong_candidate"]) is False

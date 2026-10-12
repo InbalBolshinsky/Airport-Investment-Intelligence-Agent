@@ -1,7 +1,8 @@
 """Deterministic airport metrics, computed from the local database.
 
-Each function returns one value per airport: a pandas Series indexed by the
-BTS airport code. Nothing here is scored or ranked — that's scoring.py.
+Metric functions return one value per airport: a pandas Series indexed by the
+BTS airport code (helpers that return other shapes say so). Nothing here is
+scored or ranked — that's scoring.py.
 A value that can't be computed (no runways, no fare markets, division by
 zero) is missing (NaN), never zero; scoring treats missing explicitly.
 
@@ -20,6 +21,9 @@ MIN_PASSENGERS = 100_000        # airports below this in END_YEAR aren't ranked 
 MIN_RUNWAY_FT = 5_000           # runways long enough for airliners (D-42)
 PASSENGER_AIRCRAFT_CONFIG = 1   # BTS aircraft_config 1 = passenger aircraft (D-10, D-18)
 SMALL_BASE_PASSENGERS = 100_000 # START_YEAR traffic below this = "small base" growth (D-46)
+COVID_YEARS = (2020, 2021, 2022)  # flagged in yearly series; excluded from growth (D-20)
+SHORT_HAUL_MAX_MILES = 800      # default distance bands; adjustable per question (D-12)
+LONG_HAUL_MIN_MILES = 3_000
 
 
 def annualized_growth(start: pd.Series, end: pd.Series, years: int) -> pd.Series:
@@ -100,7 +104,7 @@ def long_runway_counts(conn: sqlite3.Connection) -> pd.Series:
 def flights_per_runway(conn: sqlite3.Connection) -> pd.Series:
     """END_YEAR departures per runway of at least MIN_RUNWAY_FT (runway pressure).
 
-    Missing for airports with no such runway in the FAA data (e.g. PBI, D-43).
+    Missing for airports with no such runway in the FAA data (D-43).
     Assumes runway count is a fair proxy for runway capacity; it ignores
     layout (e.g. closely spaced parallel runways) and air-traffic procedures.
     """
@@ -211,11 +215,11 @@ def small_base(conn: sqlite3.Connection) -> pd.Series:
     return (start.reindex(airports).fillna(0) < SMALL_BASE_PASSENGERS).rename("small_base")
 
 
-COVID_YEARS = (2020, 2021, 2022)  # flagged in yearly series; excluded from growth (D-20)
-
-
 def distance_mix(
-    conn: sqlite3.Connection, airport: str, short_max_miles: float = 800, long_min_miles: float = 3000
+    conn: sqlite3.Connection,
+    airport: str,
+    short_max_miles: float = SHORT_HAUL_MAX_MILES,
+    long_min_miles: float = LONG_HAUL_MIN_MILES,
 ) -> dict[str, float] | None:
     """Share of an airport's END_YEAR passenger departures in each distance band (D-10, D-12).
 

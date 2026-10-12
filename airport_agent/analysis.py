@@ -72,11 +72,14 @@ def known_constraints(airport: str) -> list[dict[str, str]]:
 
 
 def resolve_airport(code: str) -> str:
-    """Normalize and check an airport code against the ranked airports.
+    """Normalize an airport code and check that it is ranked.
+
+    Returns:
+        The upper-case code.
 
     Raises:
-        UnknownAirportError: with a reason (too small to rank, or not found) and
-            close matches by code, name or city.
+        UnknownAirportError: why it isn't ranked (it has traffic), or close
+            matches by code, name or city (it isn't found).
     """
     clean = code.strip().upper()
     ranked = national_metrics()

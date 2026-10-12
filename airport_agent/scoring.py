@@ -14,6 +14,8 @@ Rules (decision numbers refer to the design log):
 import numpy as np
 import pandas as pd
 
+from airport_agent.metrics import SMALL_BASE_PASSENGERS, START_YEAR
+
 GROUPS: dict[str, list[str]] = {
     "runway_pressure": ["flight_growth", "flights_per_runway"],
     "terminal_pressure": ["passenger_growth", "passengers_per_flight_growth"],
@@ -38,16 +40,16 @@ METRIC_LABELS = {
     "nas_delay_rate": "capacity-related delays",
 }
 SMALL_BASE_CAVEAT = (
-    "Growth starts from a small 2019 base (under 100k passengers); likely a one-time step "
-    "(e.g. new airline service), not a steady trend."
+    f"Growth starts from a small {START_YEAR} base (under {SMALL_BASE_PASSENGERS:,} passengers); "
+    "likely a one-time step (e.g. new airline service), not a steady trend."
 )
 
 
 def percentile_ranks(values: pd.Series) -> pd.Series:
     """Percentile of each value among the non-missing values: 0 = lowest, 100 = highest.
 
-    Percentile = share of the other airports this one beats. Ties share the
-    average rank. Missing stays missing. A lone value gets 50.
+    Percentile = share of the other airports this one beats (a tie counts as
+    half a win). Missing stays missing. A lone value gets 50.
     """
     valid = values.dropna()
     if len(valid) <= 1:
@@ -76,10 +78,8 @@ def _check_weights(weights: dict[str, float] | None) -> pd.Series:
 def bottleneck_label(scored: pd.DataFrame) -> pd.Series:
     """Who is the bottleneck? (D-15, D-50, D-51)
 
-    The question is "could airlines add flights here today?", so the airport
-    side is judged on how busy it is NOW — flights per runway or
-    capacity-caused delays — not on growth. "Busy" is inferred from these
-    proxies relative to other airports; true capacity isn't in public data.
+    Judged on how busy the airport is NOW (flights per runway or capacity
+    delays, vs. other airports), not on growth; true capacity isn't public.
 
     - "airport-constrained": planes are full AND the airport is among the busiest
       today (load factor and max(flights per runway, capacity delays) percentiles
@@ -90,8 +90,8 @@ def bottleneck_label(scored: pd.DataFrame) -> pd.Series:
     - "unknown": no load factor.
     """
     full = scored["load_factor_pct"] >= BOTTLENECK_PERCENTILE
-    full_now = scored[["flights_per_runway_pct", "nas_delay_rate_pct"]].max(axis=1)
-    pressured = full_now >= BOTTLENECK_PERCENTILE
+    busy_now = scored[["flights_per_runway_pct", "nas_delay_rate_pct"]].max(axis=1)
+    pressured = busy_now >= BOTTLENECK_PERCENTILE
     labels = np.select(
         [scored["load_factor_pct"].isna(), full & pressured, full],
         ["unknown", "airport-constrained", "airline-side"],

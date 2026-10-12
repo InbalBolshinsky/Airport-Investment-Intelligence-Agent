@@ -23,7 +23,6 @@ from airport_agent.results import ToolResult, make_result
 
 SCORE_TABLES = ("airport_monthly", "routes", "fares", "delays", "runways", "airports", "regions")
 DEPARTING_CAVEAT = "Passengers = departing passengers only (~half of the total airports usually report)."
-SCORE_CAVEAT = "Scores are percentiles vs. all 226 ranked US airports; filters don't change scores."
 BUSY_CAVEAT = "'Airport-constrained' = among the busiest US airports (inferred), not measured capacity."
 
 
@@ -44,6 +43,11 @@ def _pct(fraction: Any) -> float | None:
 def _error(message: str) -> ToolResult:
     """A result the LLM can relay (e.g. 'did you mean SNA?') instead of a crash."""
     return make_result({"error": message}, source="input check", data_year="n/a", caveats=[])
+
+
+def _score_caveat() -> str:
+    count = len(analysis.national_metrics())
+    return f"Scores are percentiles vs. all {count} ranked US airports; filters don't change scores."
 
 
 def _scored_result(data: dict, caveats: list[str], *, is_estimate: bool = False) -> ToolResult:
@@ -94,12 +98,12 @@ def _summary(code: str, row: pd.Series) -> dict[str, Any]:
 def rank_airports(
     region: str | None = None,
     state: str | None = None,
-    min_passengers: int = 100_000,
+    min_passengers: int = metrics.MIN_PASSENGERS,
     max_passengers: int | None = None,
-    runway_weight: float = 30,
-    terminal_weight: float = 30,
-    unmet_demand_weight: float = 30,
-    congestion_weight: float = 10,
+    runway_weight: float = scoring.DEFAULT_WEIGHTS["runway_pressure"],
+    terminal_weight: float = scoring.DEFAULT_WEIGHTS["terminal_pressure"],
+    unmet_demand_weight: float = scoring.DEFAULT_WEIGHTS["unmet_demand"],
+    congestion_weight: float = scoring.DEFAULT_WEIGHTS["congestion"],
     top_n: int = 5,
 ) -> ToolResult:
     """Rank US airports by renovation score: how fast demand is outgrowing capacity.
@@ -146,8 +150,9 @@ def rank_airports(
             {**_summary(code, row), "regional_rank": int(row["regional_rank"])} for code, row in top.iterrows()
         ],
     }
-    caveats = [SCORE_CAVEAT, DEPARTING_CAVEAT, BUSY_CAVEAT,
-               "Rankings favor fast-growing smaller airports; many big hubs are still below 2019 traffic."]
+    caveats = [_score_caveat(), DEPARTING_CAVEAT, BUSY_CAVEAT,
+               f"Rankings favor fast-growing smaller airports; many big hubs are still below "
+               f"{metrics.START_YEAR} traffic."]
     return _scored_result(data, caveats)
 
 
@@ -181,7 +186,7 @@ def compare_airports(airports: list[str]) -> ToolResult:
         "strong_candidate": {c: bool(scores.loc[c, "strong_candidate"]) for c in codes},
         "first_airport": first,
     }
-    caveats = [SCORE_CAVEAT] + [f"{c}: {note}" for c in codes for note in scores.loc[c, "caveats"]]
+    caveats = [_score_caveat()] + [f"{c}: {note}" for c in codes for note in scores.loc[c, "caveats"]]
     return _scored_result(data, caveats)
 
 
@@ -229,7 +234,8 @@ def get_congestion_profile(airports: list[str]) -> ToolResult:
         "Delays are one month (the latest BTS publishes), arrivals only, larger reporting airlines only — seasonal.",
         "'Capacity-delayed' = delays BTS attributes to the National Aviation System (air traffic control, "
         "airport operations, heavy traffic).",
-        "Runway count (>= 5,000 ft) is a proxy for runway capacity; it ignores layout and procedures.",
+        f"Runway count (>= {metrics.MIN_RUNWAY_FT:,} ft) is a proxy for runway capacity; "
+        "it ignores layout and procedures.",
         analysis.CONSTRAINTS_COVERAGE_CAVEAT,
     ] + [f"{c}: no delay data for this airport." for c in codes if profiles[c]["delay_month"] is None]
     return _scored_result(profiles, caveats)
@@ -238,14 +244,14 @@ def get_congestion_profile(airports: list[str]) -> ToolResult:
 @tool(parse_docstring=True)
 def get_flight_distance_mix(
     airport: str,
-    short_max_miles: int = 800,
-    long_min_miles: int = 3000,
+    short_max_miles: int = metrics.SHORT_HAUL_MAX_MILES,
+    long_min_miles: int = metrics.LONG_HAUL_MIN_MILES,
 ) -> ToolResult:
     """Share of an airport's passenger departures that are short, medium and long-haul.
 
     Use for questions like "what % of flights out of Anchorage are long-haul?".
-    Returns the percentage of 2025 passenger departures in each distance band,
-    the band limits used, and how many departures were cargo flights (excluded).
+    Returns the percentage of 2025 passenger-aircraft departures in each distance
+    band, the band limits used, and total departures including non-passenger flights.
     State the band limits in the answer — there is no official definition.
 
     Args:
@@ -276,7 +282,8 @@ def get_flight_distance_mix(
         "all_departures_including_cargo": _num(all_departures, 0),
     }
     caveats = [
-        "Passenger aircraft only; cargo flights are excluded (see all_departures_including_cargo).",
+        "Passenger aircraft only; cargo, combined passenger/cargo and seaplane flights are excluded "
+        "(see all_departures_including_cargo).",
         "Distance bands are a convention, not an official definition; distances are great-circle miles.",
     ]
     source, period = analysis.provenance("routes")
@@ -291,7 +298,7 @@ def get_unmet_demand(airport: str) -> ToolResult:
     an unmet-demand index (0-100: strength of signal — NOT a passenger count),
     the signals behind it (load factor, fare premium vs. similar-distance trips,
     how busy the runways are, capacity-caused delays), a bottleneck label
-    ("airport-constrained", "airline-side" or "no unmet-demand signal"), the
+    ("airport-constrained", "airline-side", "no unmet-demand signal" or "unknown"), the
     strong_candidate flag and known constraints. Always present it as an
     estimate, and explain the "why" from the signals and constraints.
 
@@ -329,7 +336,8 @@ def get_unmet_demand(airport: str) -> ToolResult:
         "Full planes are a hint, not proof — airlines want full planes; they point to a renovation "
         "opportunity only when the airport itself is busy ('airport-constrained').",
         BUSY_CAVEAT,
-        "Fare premium compares fares with the national typical fare for the same trip distance (2025).",
+        f"Fare premium compares fares with the national typical fare for the same trip distance "
+        f"({metrics.END_YEAR}).",
         analysis.CONSTRAINTS_COVERAGE_CAVEAT,
         *row["caveats"],
     ]
@@ -375,7 +383,11 @@ def get_airport_profile(airport: str) -> ToolResult:
             for y in yearly.itertuples()
         ],
     }
-    caveats = [DEPARTING_CAVEAT, "Growth rates compare 2019 with 2025 (COVID years skipped).", *row["caveats"]]
+    caveats = [
+        DEPARTING_CAVEAT,
+        f"Growth rates compare {metrics.START_YEAR} with {metrics.END_YEAR} (COVID years skipped).",
+        *row["caveats"],
+    ]
     return _scored_result(data, caveats)
 
 

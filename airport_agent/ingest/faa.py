@@ -13,7 +13,7 @@ Cleaning:
 
 Known gaps:
 - Palm Beach International (PBI) is missing from the FAA dataset, so it has
-  no state or runway count and is left out of regional rankings.
+  no state or runway count and is not ranked at all.
 - Runway length alone does not say which aircraft can use a runway.
 """
 

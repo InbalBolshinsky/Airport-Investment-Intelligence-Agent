@@ -13,7 +13,7 @@ class ToolResult(TypedDict):
 
     data: the numbers (and labels) the answer is built from.
     source: where the numbers came from, e.g. "BTS T-100 Segment Summary (API)".
-    data_year: how recent the data is, e.g. "2025" or "2019–2025".
+    data_year: period of each table used, e.g. "airport_monthly: 2014-01 to 2026-04; routes: 2019, 2025".
     caveats: assumptions and limits the agent must mention in its answer.
     is_estimate: True when the value is inferred from proxies, not measured.
     """
@@ -33,12 +33,7 @@ def make_result(
     caveats: list[str],
     is_estimate: bool = False,
 ) -> ToolResult:
-    """Build a ToolResult. All tools go through this helper.
-
-    source, data_year and caveats are required keyword arguments, so a tool
-    that forgets its provenance fails immediately instead of silently
-    returning an answer without caveats.
-    """
+    """Build a ToolResult. Provenance args are required keywords, so a tool can't omit them."""
     return ToolResult(
         data=data,
         source=source,

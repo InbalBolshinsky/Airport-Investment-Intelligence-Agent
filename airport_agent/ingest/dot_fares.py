@@ -1,13 +1,13 @@
-"""Average fares by airport-pair market, 2025.
+"""Average fares by airport-pair market, for END_YEAR.
 
 Source: DOT "Consumer Airfare Report: Table 1a — All U.S. Airport Pair Markets"
 on the datahub.transportation.gov Socrata API (dataset tfrh-tu9e), built from
 the DB1B 10% ticket sample.
 
 Cleaning:
-- Keep 2025 (all four quarters): airports, average fare, passengers per day,
+- Keep END_YEAR (all four quarters): airports, average fare, passengers per day,
   non-stop market distance.
-- Converted to numbers. Each airport's average fare is computed in the metric
+- Converted to numbers. Each airport's fare premium is computed in the metric
   code (passenger-weighted over its markets), not here.
 
 Known gaps:
@@ -25,10 +25,11 @@ import pandas as pd
 
 from airport_agent.db import record_source, replace_table
 from airport_agent.ingest._http import socrata_rows
+from airport_agent.metrics import END_YEAR
 
 DOMAIN = "datahub.transportation.gov"
 DATASET_ID = "tfrh-tu9e"
-YEAR = 2025
+YEAR = END_YEAR
 
 
 def ingest(conn: sqlite3.Connection) -> int:
